@@ -2152,6 +2152,10 @@ func moveFileToSharedFS(filepath string, fs vfs.FS, sharedPath string, sharedFS 
 	return nil
 }
 
+// this function just copies the overall boundaries of keys but
+// it can be injected by tests
+var genSharedTableBoundaries func(smallest, largest *InternalKey) (InternalKey, InternalKey)
+
 // runCompactions runs a compaction that produces new on-disk tables from
 // memtables or old on-disk tables.
 //
@@ -2538,14 +2542,19 @@ func (d *DB) runCompaction(
 			meta.ExtendRangeKeyBounds(d.cmp, writerMeta.SmallestRangeKey, writerMeta.LargestRangeKey)
 		}
 
-		if c.outputLevel.level >= 5 && d.opts.SharedFS != nil {
+		// If the output SSTable falls in lower levels than SharedLevel, it will be moved to the shared
+		// file system asynchronously
+		if d.opts.SharedFS != nil && c.outputLevel.level >= d.opts.SharedLevel {
 			oldFilename := base.MakeFilepath(d.opts.FS, d.dirname, fileTypeTable, meta.FileNum)
 			sharedFilename := base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, d.opts.UniqueID, meta.FileNum)
 			movers.Add(1)
 			go func() {
 				defer movers.Done()
 				if err := moveFileToSharedFS(oldFilename, d.opts.FS, sharedFilename, d.opts.SharedFS); err == nil {
-					meta.UsesSharedFS = true
+					meta.SharingMetadata.IsShared = true
+					meta.SharingMetadata.CreatorUniqueID = d.opts.UniqueID
+					meta.SharingMetadata.Smallest, meta.SharingMetadata.Largest =
+						genSharedTableBoundaries(&meta.Smallest, &meta.Largest)
 				}
 			}()
 		}
@@ -2978,7 +2987,7 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 		obsoleteTables = append(obsoleteTables, fileInfo{
 			fileNum:      table.FileNum,
 			fileSize:     table.Size,
-			usesSharedFS: table.UsesSharedFS,
+			usesSharedFS: table.SharingMetadata.IsShared,
 		})
 	}
 	d.mu.versions.obsoleteTables = nil
@@ -3083,7 +3092,10 @@ func (d *DB) paceAndDeleteObsoleteFiles(jobID int, files []obsoleteFile) {
 				d.mu.Unlock()
 			}
 		}
-		d.deleteObsoleteFile(of.fileType, jobID, path, of.fileNum, of.usesSharedFS)
+		//TODO(chen): delete obsolete files in shared fs after refcnt is implemented
+		if !of.usesSharedFS {
+			d.deleteObsoleteFile(of.fileType, jobID, path, of.fileNum, of.usesSharedFS)
+		}
 	}
 }
 
@@ -3189,4 +3201,13 @@ func mergeFileMetas(a, b []*fileMetadata) []*fileMetadata {
 		}
 	}
 	return a[:n]
+}
+
+func init() {
+	// Inject the key boundary generation function for shared sst here.
+	// Since the result is created by the current Pebble instance,
+	// it can access all the data in the table
+	genSharedTableBoundaries = func(smallest, largest *InternalKey) (InternalKey, InternalKey) {
+		return smallest.Clone(), largest.Clone()
+	}
 }

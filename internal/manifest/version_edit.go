@@ -54,7 +54,7 @@ const (
 	customTagTerminate         = 1
 	customTagNeedsCompaction   = 2
 	customTagCreationTime      = 6
-	customTagSharedFS          = 7
+	customTagIsShared          = 7
 	customTagPathID            = 65
 	customTagNonSafeIgnoreMask = 1 << 6
 )
@@ -201,10 +201,11 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 			// whether we have point, range or both types of keys present in the
 			// table.
 			var (
-				smallestPointKey, largestPointKey []byte
-				smallestRangeKey, largestRangeKey []byte
-				parsedPointBounds                 bool
-				boundsMarker                      byte
+				smallestPointKey, largestPointKey   []byte
+				smallestRangeKey, largestRangeKey   []byte
+				parsedPointBounds                   bool
+				boundsMarker                        byte
+				smallestSharedKey, largestSharedKey []byte
 			)
 			if tag != tagNewFile5 {
 				// Range keys not present in the table. Parse the point key bounds.
@@ -266,8 +267,10 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 					return err
 				}
 			}
-			var markedForCompaction, usesSharedFS bool
+			var markedForCompaction bool
+			var isShared bool
 			var creationTime uint64
+			var creatorUniqueID uint64
 			if tag == tagNewFile4 || tag == tagNewFile5 {
 				for {
 					customTag, err := d.readUvarint()
@@ -298,11 +301,28 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 					case customTagPathID:
 						return base.CorruptionErrorf("new-file4: path-id field not supported")
 
-					case customTagSharedFS:
+					case customTagIsShared:
 						if len(field) != 1 {
-							return base.CorruptionErrorf("new-file4: need-compaction field wrong size")
+							return base.CorruptionErrorf("new-file4: is-shared field wrong size")
 						}
-						usesSharedFS = (field[0] == 1)
+						if field[0] != 1 {
+							return base.CorruptionErrorf("new-file4: is-shared field tag found but value is not true")
+						}
+						isShared = true
+
+						creatorUniqueID, err = d.readUvarint()
+						if err != nil {
+							return err
+						}
+
+						smallestSharedKey, err = d.readBytes()
+						if err != nil {
+							return err
+						}
+						largestSharedKey, err = d.readBytes()
+						if err != nil {
+							return err
+						}
 
 					default:
 						if (customTag & customTagNonSafeIgnoreMask) != 0 {
@@ -349,7 +369,12 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 				}
 			}
 			m.boundsSet = true
-			m.UsesSharedFS = usesSharedFS
+			m.SharingMetadata.IsShared = isShared
+			if isShared {
+				m.SharingMetadata.CreatorUniqueID = uint32(creatorUniqueID)
+				m.SharingMetadata.Smallest = base.DecodeInternalKey(smallestSharedKey)
+				m.SharingMetadata.Largest = base.DecodeInternalKey(largestSharedKey)
+			}
 			v.NewFiles = append(v.NewFiles, NewFileEntry{
 				Level: level,
 				Meta:  m,
@@ -405,7 +430,7 @@ func (v *VersionEdit) Encode(w io.Writer) error {
 		e.writeUvarint(uint64(x.FileNum))
 	}
 	for _, x := range v.NewFiles {
-		customFields := x.Meta.MarkedForCompaction || x.Meta.CreationTime != 0 || x.Meta.UsesSharedFS
+		customFields := x.Meta.MarkedForCompaction || x.Meta.CreationTime != 0 || x.Meta.SharingMetadata.IsShared
 		var tag uint64
 		switch {
 		case x.Meta.HasRangeKeys:
@@ -458,9 +483,12 @@ func (v *VersionEdit) Encode(w io.Writer) error {
 				e.writeUvarint(customTagNeedsCompaction)
 				e.writeBytes([]byte{1})
 			}
-			if x.Meta.UsesSharedFS {
-				e.writeUvarint(customTagSharedFS)
+			if x.Meta.SharingMetadata.IsShared {
+				e.writeUvarint(customTagIsShared)
 				e.writeBytes([]byte{1})
+				e.writeUvarint(uint64(x.Meta.SharingMetadata.CreatorUniqueID))
+				e.writeKey(x.Meta.SharingMetadata.Smallest)
+				e.writeKey(x.Meta.SharingMetadata.Largest)
 			}
 			e.writeUvarint(customTagTerminate)
 		}

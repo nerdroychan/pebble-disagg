@@ -71,7 +71,7 @@ type tableCacheOpts struct {
 	fs            vfs.FS
 	sharedDir     string
 	sharedFS      vfs.FS
-	uniqueID      uint16
+	uniqueID      uint32
 	psCache       *persistentCache
 	opts          sstable.ReaderOptions
 	filterMetrics *FilterMetrics
@@ -887,10 +887,10 @@ func (v *tableCacheValue) load(meta *fileMetadata, c *tableCacheShard, dbOpts *t
 	var f vfs.File
 	fs := dbOpts.fs
 	dirname := dbOpts.dirname
-	if meta.UsesSharedFS {
+	if meta.SharingMetadata.IsShared {
 		fs = dbOpts.sharedFS
 		dirname = dbOpts.sharedDir
-		v.filename = base.MakeSharedSSTPath(fs, dirname, dbOpts.uniqueID, meta.FileNum)
+		v.filename = base.MakeSharedSSTPath(fs, dirname, meta.SharingMetadata.CreatorUniqueID, meta.FileNum)
 	} else {
 		v.filename = base.MakeFilepath(fs, dirname, fileTypeTable, meta.FileNum)
 	}
@@ -898,7 +898,7 @@ func (v *tableCacheValue) load(meta *fileMetadata, c *tableCacheShard, dbOpts *t
 	if v.err == nil {
 		cacheOpts := private.SSTableCacheOpts(dbOpts.cacheID, meta.FileNum).(sstable.ReaderOption)
 		extraOpts := []sstable.ReaderOption{cacheOpts, dbOpts.filterMetrics}
-		if !meta.UsesSharedFS {
+		if !meta.SharingMetadata.IsShared {
 			extraOpts = append(extraOpts, sstable.FileReopenOpt{FS: dbOpts.fs, Filename: v.filename})
 		} else {
 			extraOpts = append(extraOpts, sstable.PersistentCacheOpt{PsCache: dbOpts.psCache, Meta: meta})

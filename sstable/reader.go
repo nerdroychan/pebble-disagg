@@ -528,6 +528,20 @@ func (i *singleLevelIterator) recordOffset() uint64 {
 // package. Note that SeekGE only checks the upper bound. It is up to the
 // caller to ensure that key is greater than or equal to the lower bound.
 func (i *singleLevelIterator) SeekGE(key []byte, flags base.SeekGEFlags) (*InternalKey, []byte) {
+	// special handling for shared sst:
+	//   if the seeking key is lower than the lower bound, set it to lower bound
+	//   if the seeking key is higher than the upper bound, return nil
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		suk := &i.reader.meta.SharingMetadata.Smallest.UserKey
+		luk := &i.reader.meta.SharingMetadata.Largest.UserKey
+		if i.cmp(key, *suk) < 0 {
+			key = *suk
+			i.upper = *luk
+		} else if i.cmp(*luk, key) < 0 {
+			return nil, nil
+		}
+	}
+
 	// The i.exhaustedBounds comparison indicates that the upper bound was
 	// reached. The i.data.isDataInvalidated() indicates that the sstable was
 	// exhausted.
@@ -723,6 +737,20 @@ func (i *singleLevelIterator) seekPrefixGE(
 // package. Note that SeekLT only checks the lower bound. It is up to the
 // caller to ensure that key is less than the upper bound.
 func (i *singleLevelIterator) SeekLT(key []byte, flags base.SeekLTFlags) (*InternalKey, []byte) {
+	// special handling for shared sst:
+	//   if the seeking key is higher than the upper bound, set it to upper bound
+	//   if the seeking key is lower than the lower bound, return nil
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		suk := &i.reader.meta.SharingMetadata.Smallest.UserKey
+		luk := &i.reader.meta.SharingMetadata.Largest.UserKey
+		if i.cmp(key, *luk) > 0 {
+			key = *luk
+			i.lower = *suk
+		} else if i.cmp(*suk, key) > 0 {
+			return nil, nil
+		}
+	}
+
 	i.exhaustedBounds = 0
 	i.err = nil // clear cached iteration error
 	boundsCmp := i.boundsCmp
@@ -824,6 +852,9 @@ func (i *singleLevelIterator) First() (*InternalKey, []byte) {
 	if i.lower != nil {
 		panic("singleLevelIterator.First() used despite lower bound")
 	}
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		return i.SeekGE(i.reader.meta.SharingMetadata.Smallest.UserKey, true)
+	}
 	i.positionedUsingLatestBounds = true
 	i.maybeFilteredKeysSingleLevel = false
 	return i.firstInternal()
@@ -881,6 +912,9 @@ func (i *singleLevelIterator) firstInternal() (*InternalKey, []byte) {
 func (i *singleLevelIterator) Last() (*InternalKey, []byte) {
 	if i.upper != nil {
 		panic("singleLevelIterator.Last() used despite upper bound")
+	}
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		return i.SeekLT(i.reader.meta.SharingMetadata.Largest.UserKey)
 	}
 	i.positionedUsingLatestBounds = true
 	i.maybeFilteredKeysSingleLevel = false
@@ -1353,6 +1387,20 @@ func (i *twoLevelIterator) MaybeFilteredKeys() bool {
 // package. Note that SeekGE only checks the upper bound. It is up to the
 // caller to ensure that key is greater than or equal to the lower bound.
 func (i *twoLevelIterator) SeekGE(key []byte, flags base.SeekGEFlags) (*InternalKey, []byte) {
+	// special handling for shared sst:
+	//   if the seeking key is lower than the lower bound, set it to lower bound
+	//   if the seeking key is higher than the upper bound, return nil
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		suk := &i.reader.meta.SharingMetadata.Smallest.UserKey
+		luk := &i.reader.meta.SharingMetadata.Largest.UserKey
+		if i.cmp(key, *suk) < 0 {
+			key = *suk
+			i.upper = *luk
+		} else if i.cmp(*luk, key) < 0 {
+			return nil, nil
+		}
+	}
+
 	i.exhaustedBounds = 0
 	i.err = nil // clear cached iteration error
 
@@ -1541,6 +1589,20 @@ func (i *twoLevelIterator) SeekPrefixGE(
 // package. Note that SeekLT only checks the lower bound. It is up to the
 // caller to ensure that key is less than the upper bound.
 func (i *twoLevelIterator) SeekLT(key []byte, flags base.SeekLTFlags) (*InternalKey, []byte) {
+	// special handling for shared sst:
+	//   if the seeking key is higher than the upper bound, set it to upper bound
+	//   if the seeking key is lower than the lower bound, return nil
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		suk := &i.reader.meta.SharingMetadata.Smallest.UserKey
+		luk := &i.reader.meta.SharingMetadata.Largest.UserKey
+		if i.cmp(key, *luk) > 0 {
+			key = *luk
+			i.lower = *suk
+		} else if i.cmp(*suk, key) > 0 {
+			return nil, nil
+		}
+	}
+
 	i.exhaustedBounds = 0
 	i.err = nil // clear cached iteration error
 	// Seek optimization only applies until iterator is first positioned after SetBounds.
@@ -1610,6 +1672,9 @@ func (i *twoLevelIterator) First() (*InternalKey, []byte) {
 	if i.lower != nil {
 		panic("twoLevelIterator.First() used despite lower bound")
 	}
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		return i.SeekGE(i.reader.meta.SharingMetadata.Smallest.UserKey, true)
+	}
 	i.exhaustedBounds = 0
 	i.maybeFilteredKeysTwoLevel = false
 	i.err = nil // clear cached iteration error
@@ -1652,6 +1717,9 @@ func (i *twoLevelIterator) First() (*InternalKey, []byte) {
 func (i *twoLevelIterator) Last() (*InternalKey, []byte) {
 	if i.upper != nil {
 		panic("twoLevelIterator.Last() used despite upper bound")
+	}
+	if i.reader.meta != nil && i.reader.meta.SharingMetadata.IsShared {
+		return i.SeekLT(i.reader.meta.SharingMetadata.Largest.UserKey)
 	}
 	i.exhaustedBounds = 0
 	i.maybeFilteredKeysTwoLevel = false
@@ -2425,7 +2493,7 @@ func (r *Reader) readBlock(
 ) (_ cache.Handle, cacheHit bool, _ error) {
 	usesSharedFS := false
 	if r.meta != nil {
-		usesSharedFS = r.meta.UsesSharedFS
+		usesSharedFS = r.meta.SharingMetadata.IsShared
 	}
 	if h := r.opts.Cache.Get(r.cacheID, r.fileNum, bh.Offset, usesSharedFS); h.Get() != nil {
 		if raState != nil {

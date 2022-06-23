@@ -117,9 +117,6 @@ type FileMetadata struct {
 	// UTC). For ingested sstables, this corresponds to the time the file was
 	// ingested.
 	CreationTime int64
-	// UsesSharedFS is true if this file is stored in the shared FS. A copy
-	// of it could also be cached on the local FS.
-	UsesSharedFS bool
 	// Smallest and largest sequence numbers in the table, across both point and
 	// range keys.
 	SmallestSeqNum uint64
@@ -193,6 +190,23 @@ type FileMetadata struct {
 	// key type (point or range) corresponds to the smallest and largest overall
 	// table bounds.
 	boundTypeSmallest, boundTypeLargest boundType
+
+	// SharingMetadata is a set of properties that indicate the sharing status of
+	// the file
+	SharingMetadata struct {
+		// IsShared indicates whether the file is local-only or shared among Pebble
+		// instances
+		IsShared bool
+
+		// CreatorUniqueID is the sst creator's UniqueID. This is used in
+		// MakeSharedSSTPath
+		CreatorUniqueID uint32
+
+		// Smallest and Largest record the key boundaries in the file that this
+		// Pebble instance can read
+		Smallest InternalKey
+		Largest  InternalKey
+	}
 }
 
 // ExtendPointKeyBounds attempts to extend the lower and upper point key bounds
@@ -960,7 +974,7 @@ func (v *Version) CheckConsistency(dirname string, fs vfs.FS, sharedFS vfs.FS) e
 	for level, files := range v.Levels {
 		iter := files.Iter()
 		for f := iter.First(); f != nil; f = iter.Next() {
-			if f.UsesSharedFS && sharedFS != nil {
+			if f.SharingMetadata.IsShared && sharedFS != nil {
 				continue
 			}
 			path := base.MakeFilepath(fs, dirname, base.FileTypeTable, f.FileNum)

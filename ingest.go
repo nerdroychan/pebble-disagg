@@ -839,7 +839,7 @@ func (d *DB) ingestApply(
 			return nil, err
 		}
 		if f.Level >= 5 && d.opts.SharedFS != nil {
-			m.UsesSharedFS = true
+			m.SharingMetadata.IsShared = true
 			obsoleteFiles = append(obsoleteFiles, obsoleteFile{
 				dir:         d.dirname,
 				fileNum:     m.FileNum,
