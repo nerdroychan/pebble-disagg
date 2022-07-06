@@ -191,22 +191,23 @@ type FileMetadata struct {
 	// table bounds.
 	boundTypeSmallest, boundTypeLargest boundType
 
-	// SharingMetadata is a set of properties that indicate the sharing status of
-	// the file
-	SharingMetadata struct {
-		// IsShared indicates whether the file is local-only or shared among Pebble
-		// instances
-		IsShared bool
+	// IsShared indicates whether the file is local-only or shared
+	// among Pebble instances
+	IsShared bool
 
-		// CreatorUniqueID is the sst creator's UniqueID. This is used in
-		// MakeSharedSSTPath
-		CreatorUniqueID uint32
+	// CreatorUniqueID is the sst creator's UniqueID.
+	// This is used in MakeSharedSSTPath
+	CreatorUniqueID uint32
 
-		// Smallest and Largest record the key boundaries in the file that this
-		// Pebble instance can read
-		Smallest InternalKey
-		Largest  InternalKey
-	}
+	// PhysicalFileNum is the file's file num when it is created
+	// This is used in MakeSharedSSTPath
+	PhysicalFileNum base.FileNum
+
+	// FileSmallest and FileLargest record the key boundaries of the file
+	// instead of the virtual boundaries that the current Pebble instance
+	// can read
+	FileSmallest InternalKey
+	FileLargest  InternalKey
 }
 
 // ExtendPointKeyBounds attempts to extend the lower and upper point key bounds
@@ -974,7 +975,7 @@ func (v *Version) CheckConsistency(dirname string, fs vfs.FS, sharedFS vfs.FS) e
 	for level, files := range v.Levels {
 		iter := files.Iter()
 		for f := iter.First(); f != nil; f = iter.Next() {
-			if f.SharingMetadata.IsShared && sharedFS != nil {
+			if f.IsShared && sharedFS != nil {
 				continue
 			}
 			path := base.MakeFilepath(fs, dirname, base.FileTypeTable, f.FileNum)

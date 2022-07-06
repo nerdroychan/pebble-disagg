@@ -19,14 +19,11 @@ func TestSharedSSTable(t *testing.T) {
 	uid := uint32(rand.Uint32())
 	t.Log("Opening ...")
 	d, err := Open("", &Options{
-		FS:                        fs,
-		SharedFS:                  sharedfs,
-		SharedDir:                 "",
-		SharedLevel:               1,
-		UniqueID:                  uid,
-		MemTableSize:              128 * 1024 * 1024,
-		L0CompactionFileThreshold: 3,
-		LBaseMaxBytes:             1024,
+		FS:          fs,
+		SharedFS:    sharedfs,
+		SharedDir:   "",
+		SharedLevel: 1,
+		UniqueID:    uid,
 	})
 	require.NoError(t, err)
 
@@ -56,7 +53,7 @@ func TestSharedSSTable(t *testing.T) {
 	genSharedTableBoundaries = func(smallest, largest *InternalKey) (InternalKey, InternalKey) {
 		snew := smallest.Clone()
 		lnew := smallest.Clone()
-		t.Logf("  -- new shared sst with bound (%s %s) from (%s %s)",
+		t.Logf("  -- new shared sst with virtual bound (%s %s) with file bound (%s %s)",
 			snew.UserKey, lnew.UserKey, smallest.UserKey, largest.UserKey)
 		return snew, lnew
 	}
@@ -85,15 +82,15 @@ func TestSharedSSTable(t *testing.T) {
 			iter := readState.current.Levels[i].Iter()
 			fm := iter.First()
 			for fm != nil {
-				if fm.SharingMetadata.IsShared {
-					t.Logf("    -- sst %d is shared with bound (%s %s)\n",
-						fm.FileNum, fm.SharingMetadata.Smallest.UserKey, fm.SharingMetadata.Largest.UserKey)
-					visible[string(fm.SharingMetadata.Smallest.UserKey)] = true
-					visible[string(fm.Largest.UserKey)] = false
+				if fm.IsShared {
+					t.Logf("    -- sst %d is shared with virtual bound (%s %s) file bound (%s %s)\n",
+						fm.FileNum, fm.Smallest.UserKey, fm.Largest.UserKey, fm.FileSmallest.UserKey, fm.FileLargest.UserKey)
+					visible[string(fm.Smallest.UserKey)] = true
+					visible[string(fm.FileLargest.UserKey)] = false
 				} else {
 					t.Logf("    -- sst %d is local with bound (%s %s)\n", fm.FileNum, fm.Smallest.UserKey, fm.Largest.UserKey)
-					visible[string(fm.Smallest.UserKey)] = true
-					visible[string(fm.Largest.UserKey)] = true
+					//visible[string(fm.Smallest.UserKey)] = true
+					//visible[string(fm.FileLargest.UserKey)] = true
 				}
 				fm = iter.Next()
 			}
@@ -152,14 +149,10 @@ func TestSharedSSTable(t *testing.T) {
 
 	t.Log("Reopening ...")
 	d, err = Open("", &Options{
-		FS:                        fs,
-		SharedFS:                  sharedfs,
-		SharedDir:                 "",
-		SharedLevel:               1,
-		UniqueID:                  uid,
-		MemTableSize:              128 * 1024 * 1024,
-		L0CompactionFileThreshold: 3,
-		LBaseMaxBytes:             1024,
+		FS:          fs,
+		SharedFS:    sharedfs,
+		SharedDir:   "",
+		SharedLevel: 1,
 	})
 	require.NoError(t, err)
 

@@ -2545,16 +2545,25 @@ func (d *DB) runCompaction(
 		// If the output SSTable falls in lower levels than SharedLevel, it will be moved to the shared
 		// file system asynchronously
 		if d.opts.SharedFS != nil && c.outputLevel.level >= d.opts.SharedLevel {
+			// The output sst is shared so update its boundaries
+			meta.FileSmallest, meta.FileLargest = meta.Smallest, meta.Largest
+
+			// assign virtual boundaries for all boundary properties
+			lb, ub := genSharedTableBoundaries(&meta.Smallest, &meta.Largest)
+			meta.Smallest, meta.Largest = lb, ub
+			meta.SmallestPointKey, meta.LargestPointKey = lb, ub
+			meta.SmallestRangeKey, meta.LargestRangeKey = lb, ub
+
+			meta.CreatorUniqueID = d.opts.UniqueID
+			meta.PhysicalFileNum = meta.FileNum
+
 			oldFilename := base.MakeFilepath(d.opts.FS, d.dirname, fileTypeTable, meta.FileNum)
 			sharedFilename := base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, d.opts.UniqueID, meta.FileNum)
 			movers.Add(1)
 			go func() {
 				defer movers.Done()
 				if err := moveFileToSharedFS(oldFilename, d.opts.FS, sharedFilename, d.opts.SharedFS); err == nil {
-					meta.SharingMetadata.IsShared = true
-					meta.SharingMetadata.CreatorUniqueID = d.opts.UniqueID
-					meta.SharingMetadata.Smallest, meta.SharingMetadata.Largest =
-						genSharedTableBoundaries(&meta.Smallest, &meta.Largest)
+					meta.IsShared = true
 				}
 			}()
 		}
@@ -2944,18 +2953,20 @@ func (d *DB) deleteObsoleteFiles(jobID int, waitForOngoing bool) {
 
 // obsoleteFile holds information about a file that needs to be deleted soon.
 type obsoleteFile struct {
-	dir          string
-	fileNum      base.FileNum
-	fileType     fileType
-	fileSize     uint64
-	usesSharedFS bool
-	skipMetrics  bool
+	dir             string
+	fileNum         base.FileNum
+	fileType        fileType
+	fileSize        uint64
+	skipMetrics     bool
+	isShared        bool
+	physicalFileNum base.FileNum
 }
 
 type fileInfo struct {
-	fileNum      FileNum
-	fileSize     uint64
-	usesSharedFS bool
+	fileNum         FileNum
+	fileSize        uint64
+	isShared        bool
+	physicalFileNum base.FileNum
 }
 
 // d.mu must be held when calling this, but the mutex may be dropped and
@@ -2984,10 +2995,15 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 	}
 
 	for _, table := range d.mu.versions.obsoleteTables {
+		physicalFileNum := table.FileNum
+		if table.IsShared {
+			physicalFileNum = table.PhysicalFileNum
+		}
 		obsoleteTables = append(obsoleteTables, fileInfo{
-			fileNum:      table.FileNum,
-			fileSize:     table.Size,
-			usesSharedFS: table.SharingMetadata.IsShared,
+			fileNum:         table.FileNum,
+			fileSize:        table.Size,
+			isShared:        table.IsShared,
+			physicalFileNum: physicalFileNum,
 		})
 	}
 	d.mu.versions.obsoleteTables = nil
@@ -3047,11 +3063,12 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 			}
 
 			filesToDelete = append(filesToDelete, obsoleteFile{
-				dir:          dir,
-				fileNum:      fi.fileNum,
-				fileType:     f.fileType,
-				fileSize:     fi.fileSize,
-				usesSharedFS: fi.usesSharedFS,
+				dir:             dir,
+				fileNum:         fi.fileNum,
+				fileType:        f.fileType,
+				fileSize:        fi.fileSize,
+				isShared:        fi.isShared,
+				physicalFileNum: fi.physicalFileNum,
 			})
 		}
 	}
@@ -3078,8 +3095,8 @@ func (d *DB) paceAndDeleteObsoleteFiles(jobID int, files []obsoleteFile) {
 	for _, of := range files {
 		path := base.MakeFilepath(d.opts.FS, of.dir, of.fileType, of.fileNum)
 		if of.fileType == fileTypeTable {
-			if of.usesSharedFS {
-				path = base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, d.opts.UniqueID, of.fileNum)
+			if of.isShared {
+				path = base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, d.opts.UniqueID, of.physicalFileNum)
 				if d.persistentCache != nil {
 					d.persistentCache.MarkDeleted(of.fileNum)
 				}
@@ -3092,10 +3109,7 @@ func (d *DB) paceAndDeleteObsoleteFiles(jobID int, files []obsoleteFile) {
 				d.mu.Unlock()
 			}
 		}
-		//TODO(chen): delete obsolete files in shared fs after refcnt is implemented
-		if !of.usesSharedFS {
-			d.deleteObsoleteFile(of.fileType, jobID, path, of.fileNum, of.usesSharedFS)
-		}
+		d.deleteObsoleteFile(of.fileType, jobID, path, of.fileNum, of.isShared)
 	}
 }
 
@@ -3125,15 +3139,20 @@ func (d *DB) maybeScheduleObsoleteTableDeletion() {
 
 // deleteObsoleteFile deletes file that is no longer needed.
 func (d *DB) deleteObsoleteFile(
-	fileType fileType, jobID int, path string, fileNum FileNum, usesSharedFS bool,
+	fileType fileType, jobID int, path string, fileNum FileNum, isShared bool,
 ) {
 	// TODO(peter): need to handle this error, probably by re-adding the
 	// file that couldn't be deleted to one of the obsolete slices map.
 	fs := d.opts.FS
-	if usesSharedFS {
+	if isShared {
 		fs = d.opts.SharedFS
 	}
-	err := d.opts.Cleaner.Clean(fs, fileType, path)
+	var err error
+	err = nil
+	//TODO(chen): really delete obsolete files in shared fs after refcnt is implemented
+	if !isShared {
+		err = d.opts.Cleaner.Clean(fs, fileType, path)
+	}
 	if oserror.IsNotExist(err) {
 		return
 	}

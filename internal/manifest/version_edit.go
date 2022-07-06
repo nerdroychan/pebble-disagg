@@ -201,11 +201,11 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 			// whether we have point, range or both types of keys present in the
 			// table.
 			var (
-				smallestPointKey, largestPointKey   []byte
-				smallestRangeKey, largestRangeKey   []byte
-				parsedPointBounds                   bool
-				boundsMarker                        byte
-				smallestSharedKey, largestSharedKey []byte
+				smallestPointKey, largestPointKey []byte
+				smallestRangeKey, largestRangeKey []byte
+				parsedPointBounds                 bool
+				boundsMarker                      byte
+				fileSmallest, fileLargest         []byte
 			)
 			if tag != tagNewFile5 {
 				// Range keys not present in the table. Parse the point key bounds.
@@ -271,6 +271,7 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 			var isShared bool
 			var creationTime uint64
 			var creatorUniqueID uint64
+			var physicalFileNum uint64
 			if tag == tagNewFile4 || tag == tagNewFile5 {
 				for {
 					customTag, err := d.readUvarint()
@@ -315,11 +316,16 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 							return err
 						}
 
-						smallestSharedKey, err = d.readBytes()
+						physicalFileNum, err = d.readUvarint()
 						if err != nil {
 							return err
 						}
-						largestSharedKey, err = d.readBytes()
+
+						fileSmallest, err = d.readBytes()
+						if err != nil {
+							return err
+						}
+						fileLargest, err = d.readBytes()
 						if err != nil {
 							return err
 						}
@@ -369,11 +375,12 @@ func (v *VersionEdit) Decode(r io.Reader) error {
 				}
 			}
 			m.boundsSet = true
-			m.SharingMetadata.IsShared = isShared
+			m.IsShared = isShared
 			if isShared {
-				m.SharingMetadata.CreatorUniqueID = uint32(creatorUniqueID)
-				m.SharingMetadata.Smallest = base.DecodeInternalKey(smallestSharedKey)
-				m.SharingMetadata.Largest = base.DecodeInternalKey(largestSharedKey)
+				m.CreatorUniqueID = uint32(creatorUniqueID)
+				m.PhysicalFileNum = base.FileNum(physicalFileNum)
+				m.FileSmallest = base.DecodeInternalKey(fileSmallest)
+				m.FileLargest = base.DecodeInternalKey(fileLargest)
 			}
 			v.NewFiles = append(v.NewFiles, NewFileEntry{
 				Level: level,
@@ -430,7 +437,7 @@ func (v *VersionEdit) Encode(w io.Writer) error {
 		e.writeUvarint(uint64(x.FileNum))
 	}
 	for _, x := range v.NewFiles {
-		customFields := x.Meta.MarkedForCompaction || x.Meta.CreationTime != 0 || x.Meta.SharingMetadata.IsShared
+		customFields := x.Meta.MarkedForCompaction || x.Meta.CreationTime != 0 || x.Meta.IsShared
 		var tag uint64
 		switch {
 		case x.Meta.HasRangeKeys:
@@ -483,12 +490,13 @@ func (v *VersionEdit) Encode(w io.Writer) error {
 				e.writeUvarint(customTagNeedsCompaction)
 				e.writeBytes([]byte{1})
 			}
-			if x.Meta.SharingMetadata.IsShared {
+			if x.Meta.IsShared {
 				e.writeUvarint(customTagIsShared)
 				e.writeBytes([]byte{1})
-				e.writeUvarint(uint64(x.Meta.SharingMetadata.CreatorUniqueID))
-				e.writeKey(x.Meta.SharingMetadata.Smallest)
-				e.writeKey(x.Meta.SharingMetadata.Largest)
+				e.writeUvarint(uint64(x.Meta.CreatorUniqueID))
+				e.writeUvarint(uint64(x.Meta.PhysicalFileNum))
+				e.writeKey(x.Meta.FileSmallest)
+				e.writeKey(x.Meta.FileLargest)
 			}
 			e.writeUvarint(customTagTerminate)
 		}

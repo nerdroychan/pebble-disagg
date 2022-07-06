@@ -357,8 +357,8 @@ func Open(dirname string, opts *Options) (db *DB, _ error) {
 		opts.UniqueID = uniqueID
 	}
 
-	// Default shared levels are 5 and 6
-	if opts.SharedLevel == 0 {
+	// Default shared levels are 5 and 6 unless otherwise specified (for testing only)
+	if opts.SharedFS != nil && opts.SharedLevel == 0 {
 		opts.SharedLevel = 5
 	}
 
