@@ -19,11 +19,10 @@ func TestSharedSSTable(t *testing.T) {
 	uid := uint32(rand.Uint32())
 	t.Log("Opening ...")
 	d, err := Open("", &Options{
-		FS:          fs,
-		SharedFS:    sharedfs,
-		SharedDir:   "",
-		SharedLevel: 1,
-		UniqueID:    uid,
+		FS:        fs,
+		SharedFS:  sharedfs,
+		SharedDir: "",
+		UniqueID:  uid,
 	})
 	require.NoError(t, err)
 
@@ -149,10 +148,9 @@ func TestSharedSSTable(t *testing.T) {
 
 	t.Log("Reopening ...")
 	d, err = Open("", &Options{
-		FS:          fs,
-		SharedFS:    sharedfs,
-		SharedDir:   "",
-		SharedLevel: 1,
+		FS:        fs,
+		SharedFS:  sharedfs,
+		SharedDir: "",
 	})
 	require.NoError(t, err)
 

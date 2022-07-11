@@ -208,6 +208,9 @@ type FileMetadata struct {
 	// can read
 	FileSmallest InternalKey
 	FileLargest  InternalKey
+
+	// Level is the level of the file
+	Level int
 }
 
 // ExtendPointKeyBounds attempts to extend the lower and upper point key bounds

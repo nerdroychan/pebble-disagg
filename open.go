@@ -23,6 +23,7 @@ import (
 	"github.com/cockroachdb/pebble/internal/manual"
 	"github.com/cockroachdb/pebble/internal/rate"
 	"github.com/cockroachdb/pebble/record"
+	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 )
 
@@ -357,10 +358,8 @@ func Open(dirname string, opts *Options) (db *DB, _ error) {
 		opts.UniqueID = uniqueID
 	}
 
-	// Default shared levels are 5 and 6 unless otherwise specified (for testing only)
-	if opts.SharedFS != nil && opts.SharedLevel == 0 {
-		opts.SharedLevel = 5
-	}
+	// Inject UniqueID to sstable package
+	sstable.DBUniqueID = opts.UniqueID
 
 	if opts.SharedFS != nil && opts.PersistentCacheSize != 0 {
 		d.persistentCache = newPersistentCache(opts.FS, dirname, opts.SharedFS, opts.SharedDir, opts.UniqueID, opts.PersistentCacheSize)

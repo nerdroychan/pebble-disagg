@@ -29,6 +29,8 @@ import (
 	"github.com/cockroachdb/pebble/vfs"
 )
 
+const sharedLevel = 5
+
 var errEmptyTable = errors.New("pebble: empty table")
 var errFlushInvariant = errors.New("pebble: flush next log number is unset")
 
@@ -2206,6 +2208,7 @@ func (d *DB) runCompaction(
 	if c.kind == compactionKindMove {
 		iter := c.startLevel.files.Iter()
 		meta := iter.First()
+		meta.Level = c.outputLevel.level
 		c.metrics = map[int]*LevelMetrics{
 			c.startLevel.level: {
 				NumFiles: -1,
@@ -2542,9 +2545,12 @@ func (d *DB) runCompaction(
 			meta.ExtendRangeKeyBounds(d.cmp, writerMeta.SmallestRangeKey, writerMeta.LargestRangeKey)
 		}
 
-		// If the output SSTable falls in lower levels than SharedLevel, it will be moved to the shared
+		// Record the level of the output file, just for a record
+		meta.Level = c.outputLevel.level
+
+		// If the output SSTable falls in lower levels than sharedLevel, it will be moved to the shared
 		// file system asynchronously
-		if d.opts.SharedFS != nil && c.outputLevel.level >= d.opts.SharedLevel {
+		if d.opts.SharedFS != nil && c.outputLevel.level >= sharedLevel {
 			// The output sst is shared so update its boundaries
 			meta.FileSmallest, meta.FileLargest = meta.Smallest, meta.Largest
 

@@ -665,10 +665,6 @@ type Options struct {
 	// than FS.
 	SharedFS vfs.FS
 
-	// SharedLevel is the minimum (highest) level that reside in SharedFS. All
-	// tables in lower levels will also use SharedFS.
-	SharedLevel int
-
 	// UniqueID is a unique ID that's generated for new Pebble instances and
 	// serialized into the Options file. Used to disambiguate this instance's
 	// files from that of others in SharedFS.

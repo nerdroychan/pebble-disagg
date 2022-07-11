@@ -26,6 +26,9 @@ import (
 	"github.com/cockroachdb/pebble/vfs"
 )
 
+// DBUniqueID is injected by pebble during Open()
+var DBUniqueID uint32 = 0
+
 var errCorruptIndexEntry = base.CorruptionErrorf("pebble/table: corrupt index entry")
 var errReaderClosed = errors.New("pebble/table: reader is closed")
 
@@ -1167,7 +1170,7 @@ func (i *singleLevelIterator) ResetStats() {
 // compactionIterator is similar to Iterator but it increments the number of
 // bytes that have been iterated through.
 type compactionIterator struct {
-	*singleLevelIteratorS
+	*tableIterator
 	bytesIterated *uint64
 	prevOffset    uint64
 }
@@ -1176,7 +1179,7 @@ type compactionIterator struct {
 var _ base.InternalIterator = (*compactionIterator)(nil)
 
 func (i *compactionIterator) String() string {
-	return i.reader.fileNum.String()
+	return i.tableIterator.getReader().fileNum.String()
 }
 
 func (i *compactionIterator) SeekGE(key []byte, flags base.SeekGEFlags) (*InternalKey, []byte) {
@@ -1194,10 +1197,10 @@ func (i *compactionIterator) SeekLT(key []byte, flags base.SeekLTFlags) (*Intern
 }
 
 func (i *compactionIterator) First() (*InternalKey, []byte) {
-	i.err = nil // clear cached iteration error
+	i.iter.(*singleLevelIterator).err = nil // clear cached iteration error
 	// wrap for shared sst
-	k, v := i.singleLevelIteratorS.First()
-	curOffset := i.recordOffset()
+	k, v := i.tableIterator.First()
+	curOffset := i.iter.(*singleLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1210,12 +1213,12 @@ func (i *compactionIterator) Last() (*InternalKey, []byte) {
 // Note: compactionIterator.Next mirrors the implementation of Iterator.Next
 // due to performance. Keep the two in sync.
 func (i *compactionIterator) Next() (*InternalKey, []byte) {
-	if i.err != nil {
+	if i.iter.(*singleLevelIterator).err != nil {
 		return nil, nil
 	}
 	// wrap for shared sst
-	k, v := i.singleLevelIteratorS.Next()
-	curOffset := i.recordOffset()
+	k, v := i.tableIterator.Next()
+	curOffset := i.iter.(*singleLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1798,7 +1801,7 @@ func (i *twoLevelIterator) Close() error {
 // Note: twoLevelCompactionIterator and compactionIterator are very similar but
 // were separated due to performance.
 type twoLevelCompactionIterator struct {
-	*twoLevelIteratorS
+	*tableIterator
 	bytesIterated *uint64
 	prevOffset    uint64
 }
@@ -1807,7 +1810,7 @@ type twoLevelCompactionIterator struct {
 var _ base.InternalIterator = (*twoLevelCompactionIterator)(nil)
 
 func (i *twoLevelCompactionIterator) Close() error {
-	return i.twoLevelIterator.Close()
+	return i.tableIterator.Close()
 }
 
 func (i *twoLevelCompactionIterator) SeekGE(
@@ -1829,10 +1832,10 @@ func (i *twoLevelCompactionIterator) SeekLT(
 }
 
 func (i *twoLevelCompactionIterator) First() (*InternalKey, []byte) {
-	i.err = nil // clear cached iteration error
+	i.iter.(*twoLevelIterator).err = nil // clear cached iteration error
 	// wrap for shared sst
-	k, v := i.twoLevelIteratorS.First()
-	curOffset := i.recordOffset()
+	k, v := i.tableIterator.First()
+	curOffset := i.iter.(*twoLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1845,12 +1848,12 @@ func (i *twoLevelCompactionIterator) Last() (*InternalKey, []byte) {
 // Note: twoLevelCompactionIterator.Next mirrors the implementation of
 // twoLevelIterator.Next due to performance. Keep the two in sync.
 func (i *twoLevelCompactionIterator) Next() (*InternalKey, []byte) {
-	if i.err != nil {
+	if i.iter.(*twoLevelIterator).err != nil {
 		return nil, nil
 	}
 	// wrap for shared sst
-	k, v := i.twoLevelIteratorS.Next()
-	curOffset := i.recordOffset()
+	k, v := i.tableIterator.Next()
+	curOffset := i.iter.(*twoLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1861,7 +1864,7 @@ func (i *twoLevelCompactionIterator) Prev() (*InternalKey, []byte) {
 }
 
 func (i *twoLevelCompactionIterator) String() string {
-	return i.reader.fileNum.String()
+	return i.tableIterator.getReader().fileNum.String()
 }
 
 type blockTransform func([]byte) ([]byte, error)
@@ -2238,7 +2241,7 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 		if err != nil {
 			return nil, err
 		}
-		return &twoLevelIteratorS{i}, nil
+		return &tableIterator{i, true}, nil
 	}
 
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
@@ -2246,7 +2249,7 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 	if err != nil {
 		return nil, err
 	}
-	return &singleLevelIteratorS{i}, nil
+	return &tableIterator{i, false}, nil
 }
 
 // NewIter returns an iterator for the contents of the table. If an error
@@ -2267,8 +2270,8 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 		}
 		i.setupForCompaction()
 		return &twoLevelCompactionIterator{
-			twoLevelIteratorS: &twoLevelIteratorS{i},
-			bytesIterated:     bytesIterated,
+			tableIterator: &tableIterator{i, true},
+			bytesIterated: bytesIterated,
 		}, nil
 	}
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
@@ -2278,8 +2281,8 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 	}
 	i.setupForCompaction()
 	return &compactionIterator{
-		singleLevelIteratorS: &singleLevelIteratorS{i},
-		bytesIterated:        bytesIterated,
+		tableIterator: &tableIterator{i, false},
+		bytesIterated: bytesIterated,
 	}, nil
 }
 

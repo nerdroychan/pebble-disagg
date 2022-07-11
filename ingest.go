@@ -838,7 +838,7 @@ func (d *DB) ingestApply(
 			d.mu.versions.logUnlock()
 			return nil, err
 		}
-		if f.Level >= d.opts.SharedLevel && d.opts.SharedFS != nil {
+		if f.Level >= sharedLevel && d.opts.SharedFS != nil {
 			m.IsShared = true
 			obsoleteFiles = append(obsoleteFiles, obsoleteFile{
 				dir:         d.dirname,
