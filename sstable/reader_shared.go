@@ -139,9 +139,10 @@ func (i *tableIterator) seekGEShared(
 	// here because if k != nil then we are guaranteed to be positioned at the first
 	// user key that satisfies the condition, which is the latest version.
 	if !i.isLocallyCreated() {
-		if r.meta.Level == 5 {
+		level := i.GetLevel()
+		if level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
-		} else if r.meta.Level == 6 {
+		} else if level == 6 {
 			k.SetSeqNum(seqNumL6All)
 		} else {
 			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
@@ -198,9 +199,10 @@ func (i *tableIterator) seekLTShared(key []byte) (*InternalKey, []byte) {
 		}
 		// now, either k == nil or k < ik, so k is just one slot over
 		k, v = i.Iterator.Next()
-		if r.meta.Level == 5 {
+		level := i.GetLevel()
+		if level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
-		} else if r.meta.Level == 6 {
+		} else if level == 6 {
 			k.SetSeqNum(seqNumL6All)
 		} else {
 			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
@@ -250,7 +252,7 @@ func (i *tableIterator) Last() (*InternalKey, []byte) {
 }
 
 func (i *tableIterator) nextShared() (*InternalKey, []byte) {
-	r, cmp := i.getReader(), i.getCmp()
+	cmp := i.getCmp()
 	// Next() is not a simple case, as a valid position of an iterator
 	// for a purely foreign table always points to the latest version of a user key,
 	// and all the other versions are not exposed. Therefore, when we move forward,
@@ -276,9 +278,10 @@ func (i *tableIterator) nextShared() (*InternalKey, []byte) {
 			return nil, nil
 		}
 		k, v = i.Iterator.Prev()
-		if r.meta.Level == 5 {
+		level := i.GetLevel()
+		if level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
-		} else if r.meta.Level == 6 {
+		} else if level == 6 {
 			k.SetSeqNum(seqNumL6All)
 		} else {
 			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
@@ -300,7 +303,7 @@ func (i *tableIterator) Next() (*InternalKey, []byte) {
 }
 
 func (i *tableIterator) prevShared() (*InternalKey, []byte) {
-	r, cmp := i.getReader(), i.getCmp()
+	cmp := i.getCmp()
 	// First move to the previous position, as we must move at least once.
 	// Note that if the iterator operates correctly, this Prev() must set the position
 	// of the iterator to a different key, as we were exposing the latest point version
@@ -320,9 +323,10 @@ func (i *tableIterator) prevShared() (*InternalKey, []byte) {
 		}
 		// At the current moment, either k < ik, or k == nil. So we rewind iter once.
 		k, v = i.Iterator.Next()
-		if r.meta.Level == 5 {
+		level := i.GetLevel()
+		if level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
-		} else if r.meta.Level == 6 {
+		} else if level == 6 {
 			k.SetSeqNum(seqNumL6All)
 		} else {
 			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
@@ -334,7 +338,6 @@ func (i *tableIterator) prevShared() (*InternalKey, []byte) {
 		return nil, nil
 	}
 	return k, v
-
 }
 
 func (i *tableIterator) Prev() (*InternalKey, []byte) {
@@ -342,26 +345,6 @@ func (i *tableIterator) Prev() (*InternalKey, []byte) {
 		return i.prevShared()
 	}
 	return i.Iterator.Prev()
-}
-
-func (i *tableIterator) Error() error {
-	return i.Iterator.Error()
-}
-
-func (i *tableIterator) Close() error {
-	return i.Iterator.Close()
-}
-
-func (i *tableIterator) SetBounds(lower, upper []byte) {
-	i.Iterator.SetBounds(lower, upper)
-}
-
-func (i *tableIterator) String() string {
-	return i.Iterator.String()
-}
-
-func (i *tableIterator) SetCloseHook(fn func(i Iterator) error) {
-	i.Iterator.SetCloseHook(fn)
 }
 
 func (i tableIterator) Stats() base.InternalIteratorStats {
@@ -389,6 +372,7 @@ func (i *tableIterator) ResetStats() {
 	}
 }
 
+// Implemented interfaces. All things goes to the internal Interator.
 var _ base.InternalIterator = (*tableIterator)(nil)
 var _ base.InternalIteratorWithStats = (*tableIterator)(nil)
 var _ Iterator = (*tableIterator)(nil)

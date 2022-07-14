@@ -119,6 +119,9 @@ type Iterator interface {
 	MaybeFilteredKeys() bool
 
 	SetCloseHook(fn func(i Iterator) error)
+
+	SetLevel(level int)
+	GetLevel() int
 }
 
 // singleLevelIterator iterates over an entire table of data. To seek for a given
@@ -240,6 +243,9 @@ type singleLevelIterator struct {
 	// is high).
 	useFilter              bool
 	lastBloomFilterMatched bool
+
+	level    int
+	levelSet bool
 }
 
 // singleLevelIterator implements the base.InternalIterator interface.
@@ -1086,6 +1092,20 @@ func (i *singleLevelIterator) MaybeFilteredKeys() bool {
 // closed.
 func (i *singleLevelIterator) SetCloseHook(fn func(i Iterator) error) {
 	i.closeHook = fn
+}
+
+// SetLevel implementes Iterator.SetLevel()
+func (i *singleLevelIterator) SetLevel(level int) {
+	i.levelSet = true
+	i.level = level
+}
+
+// GetLevel implements Iterator.GetLevel()
+func (i *singleLevelIterator) GetLevel() int {
+	if !i.levelSet {
+		return -1
+	}
+	return i.level
 }
 
 func firstError(err0, err1 error) error {

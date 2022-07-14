@@ -418,7 +418,9 @@ func (c *tableCacheShard) newIters(
 
 	var iter sstable.Iterator
 	useFilter := true
+	level := -1
 	if opts != nil {
+		level = manifest.LevelToInt(opts.level)
 		useFilter = manifest.LevelToInt(opts.level) != 6 || opts.UseL6Filters
 	}
 	if bytesIterated != nil {
@@ -434,6 +436,8 @@ func (c *tableCacheShard) newIters(
 		c.unrefValue(v)
 		return nil, nil, err
 	}
+	// Set the level here for internal use by sstable package (now only for shared sst)
+	iter.SetLevel(level)
 	// NB: v.closeHook takes responsibility for calling unrefValue(v) here. Take
 	// care to avoid introduceingan allocation here by adding a closure.
 	iter.SetCloseHook(v.closeHook)

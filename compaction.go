@@ -2208,7 +2208,6 @@ func (d *DB) runCompaction(
 	if c.kind == compactionKindMove {
 		iter := c.startLevel.files.Iter()
 		meta := iter.First()
-		meta.Level = c.outputLevel.level
 		c.metrics = map[int]*LevelMetrics{
 			c.startLevel.level: {
 				NumFiles: -1,
@@ -2544,9 +2543,6 @@ func (d *DB) runCompaction(
 		if writerMeta.HasRangeKeys {
 			meta.ExtendRangeKeyBounds(d.cmp, writerMeta.SmallestRangeKey, writerMeta.LargestRangeKey)
 		}
-
-		// Record the level of the output file, just for a record
-		meta.Level = c.outputLevel.level
 
 		// If the output SSTable falls in lower levels than sharedLevel, it will be moved to the shared
 		// file system asynchronously

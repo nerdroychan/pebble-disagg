@@ -166,7 +166,7 @@ type IterOptions struct {
 	// Internal options.
 	logger Logger
 	// Level corresponding to this file. Only passed in if constructed by a
-	// levelIter.
+	// levelIter (including regular reads and compaction inputs).
 	level manifest.Level
 
 	// NB: If adding new Options, you must account for them in iterator
