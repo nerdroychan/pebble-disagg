@@ -438,6 +438,7 @@ func (c *tableCacheShard) newIters(
 	}
 	// Set the level here for internal use by sstable package (now only for shared sst)
 	iter.SetLevel(level)
+
 	// NB: v.closeHook takes responsibility for calling unrefValue(v) here. Take
 	// care to avoid introduceingan allocation here by adding a closure.
 	iter.SetCloseHook(v.closeHook)

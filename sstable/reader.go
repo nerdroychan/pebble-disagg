@@ -2261,7 +2261,14 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 		if err != nil {
 			return nil, err
 		}
-		return &tableIterator{i}, nil
+		rangeDelIter, err := r.newInternalRangeDelIter()
+		if err != nil {
+			if i.Close() != nil {
+				panic("NewIter: cannot create rangeDelIter for tableIterator")
+			}
+			return nil, err
+		}
+		return &tableIterator{i, rangeDelIter}, nil
 	}
 
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
@@ -2269,7 +2276,14 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 	if err != nil {
 		return nil, err
 	}
-	return &tableIterator{i}, nil
+	rangeDelIter, err := r.newInternalRangeDelIter()
+	if err != nil {
+		if i.Close() != nil {
+			panic("NewIter: cannot create rangeDelIter for tableIterator")
+		}
+		return nil, err
+	}
+	return &tableIterator{i, rangeDelIter}, nil
 }
 
 // NewIter returns an iterator for the contents of the table. If an error
@@ -2289,8 +2303,15 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 			return nil, err
 		}
 		i.setupForCompaction()
+		rangeDelIter, err := r.newInternalRangeDelIter()
+		if err != nil {
+			if i.Close() != nil {
+				panic("NewIter: cannot create rangeDelIter for tableIterator")
+			}
+			return nil, err
+		}
 		return &twoLevelCompactionIterator{
-			tableIterator: &tableIterator{i},
+			tableIterator: &tableIterator{i, rangeDelIter},
 			bytesIterated: bytesIterated,
 		}, nil
 	}
@@ -2300,8 +2321,15 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 		return nil, err
 	}
 	i.setupForCompaction()
+	rangeDelIter, err := r.newInternalRangeDelIter()
+	if err != nil {
+		if i.Close() != nil {
+			panic("NewIter: cannot create rangeDelIter for tableIterator")
+		}
+		return nil, err
+	}
 	return &compactionIterator{
-		tableIterator: &tableIterator{i},
+		tableIterator: &tableIterator{i, rangeDelIter},
 		bytesIterated: bytesIterated,
 	}, nil
 }

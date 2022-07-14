@@ -2156,7 +2156,7 @@ func moveFileToSharedFS(filepath string, fs vfs.FS, sharedPath string, sharedFS 
 
 // this function just copies the overall boundaries of keys but
 // it can be injected by tests
-var genSharedTableBoundaries func(smallest, largest *InternalKey) (InternalKey, InternalKey)
+var setSharedSSTMetadata func(meta *manifest.FileMetadata, creatorID uint32)
 
 // runCompactions runs a compaction that produces new on-disk tables from
 // memtables or old on-disk tables.
@@ -2547,20 +2547,14 @@ func (d *DB) runCompaction(
 		// If the output SSTable falls in lower levels than sharedLevel, it will be moved to the shared
 		// file system asynchronously
 		if d.opts.SharedFS != nil && c.outputLevel.level >= sharedLevel {
-			// The output sst is shared so update its boundaries
-			meta.FileSmallest, meta.FileLargest = meta.Smallest, meta.Largest
+			if writerMeta.HasRangeKeys {
+				panic("runCompaction: shared sst does not support range keys")
+			}
 
-			// assign virtual boundaries for all boundary properties
-			lb, ub := genSharedTableBoundaries(&meta.Smallest, &meta.Largest)
-			meta.Smallest, meta.Largest = lb, ub
-			meta.SmallestPointKey, meta.LargestPointKey = lb, ub
-			meta.SmallestRangeKey, meta.LargestRangeKey = lb, ub
-
-			meta.CreatorUniqueID = d.opts.UniqueID
-			meta.PhysicalFileNum = meta.FileNum
+			setSharedSSTMetadata(meta, d.opts.UniqueID)
 
 			oldFilename := base.MakeFilepath(d.opts.FS, d.dirname, fileTypeTable, meta.FileNum)
-			sharedFilename := base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, d.opts.UniqueID, meta.FileNum)
+			sharedFilename := base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, meta.CreatorUniqueID, meta.PhysicalFileNum)
 			movers.Add(1)
 			go func() {
 				defer movers.Done()
@@ -2961,6 +2955,7 @@ type obsoleteFile struct {
 	fileSize        uint64
 	skipMetrics     bool
 	isShared        bool
+	creatorUniqueID uint32
 	physicalFileNum base.FileNum
 }
 
@@ -2968,6 +2963,7 @@ type fileInfo struct {
 	fileNum         FileNum
 	fileSize        uint64
 	isShared        bool
+	creatorUniqueID uint32
 	physicalFileNum base.FileNum
 }
 
@@ -2997,14 +2993,20 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 	}
 
 	for _, table := range d.mu.versions.obsoleteTables {
+		// consider the file was created locally by default
 		physicalFileNum := table.FileNum
+		creatorUniqueID := d.opts.UniqueID
 		if table.IsShared {
+			// if the file is shared, then use its metadata regardless of it
+			// is local or foreign
 			physicalFileNum = table.PhysicalFileNum
+			creatorUniqueID = table.CreatorUniqueID
 		}
 		obsoleteTables = append(obsoleteTables, fileInfo{
 			fileNum:         table.FileNum,
 			fileSize:        table.Size,
 			isShared:        table.IsShared,
+			creatorUniqueID: creatorUniqueID,
 			physicalFileNum: physicalFileNum,
 		})
 	}
@@ -3070,6 +3072,7 @@ func (d *DB) doDeleteObsoleteFiles(jobID int) {
 				fileType:        f.fileType,
 				fileSize:        fi.fileSize,
 				isShared:        fi.isShared,
+				creatorUniqueID: fi.creatorUniqueID,
 				physicalFileNum: fi.physicalFileNum,
 			})
 		}
@@ -3098,7 +3101,7 @@ func (d *DB) paceAndDeleteObsoleteFiles(jobID int, files []obsoleteFile) {
 		path := base.MakeFilepath(d.opts.FS, of.dir, of.fileType, of.fileNum)
 		if of.fileType == fileTypeTable {
 			if of.isShared {
-				path = base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, d.opts.UniqueID, of.physicalFileNum)
+				path = base.MakeSharedSSTPath(d.opts.SharedFS, d.opts.SharedDir, of.creatorUniqueID, of.physicalFileNum)
 				if d.persistentCache != nil {
 					d.persistentCache.MarkDeleted(of.fileNum)
 				}
@@ -3225,10 +3228,19 @@ func mergeFileMetas(a, b []*fileMetadata) []*fileMetadata {
 }
 
 func init() {
-	// Inject the key boundary generation function for shared sst here.
+	// Inject the shared sst metadata setting function here.
 	// Since the result is created by the current Pebble instance,
 	// it can access all the data in the table
-	genSharedTableBoundaries = func(smallest, largest *InternalKey) (InternalKey, InternalKey) {
-		return smallest.Clone(), largest.Clone()
+	setSharedSSTMetadata = func(meta *manifest.FileMetadata, creatorUniqueID uint32) {
+		// The output sst is shared so update its boundaries
+		meta.FileSmallest, meta.FileLargest = meta.Smallest, meta.Largest
+
+		// assign virtual boundaries for all boundary properties
+		lb, ub := meta.Smallest, meta.Largest
+		meta.Smallest, meta.Largest = lb, ub
+		meta.SmallestPointKey, meta.LargestPointKey = lb, ub
+
+		meta.CreatorUniqueID = creatorUniqueID
+		meta.PhysicalFileNum = meta.FileNum
 	}
 }

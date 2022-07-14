@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSharedSSTable(t *testing.T) {
+func TestDBWithSharedSST(t *testing.T) {
 	fs := vfs.NewMem()
 	sharedfs := vfs.NewMem()
 
@@ -29,7 +29,9 @@ func TestSharedSSTable(t *testing.T) {
 	// this is tricky, we need to make the directory for testing
 	const buckets = 10
 	for i := 0; i < buckets; i++ {
+		// create local and fake foreign buckets
 		require.NoError(t, sharedfs.MkdirAll(fmt.Sprintf("%d/%d", uid, i), 0755))
+		require.NoError(t, sharedfs.MkdirAll(fmt.Sprintf("%d/%d", uid+1, i), 0755))
 	}
 
 	rand.Seed(time.Now().UnixNano())
@@ -49,12 +51,20 @@ func TestSharedSSTable(t *testing.T) {
 	visible := make(map[string]bool)
 
 	// inject key boundaries function to filter out the upper
-	genSharedTableBoundaries = func(smallest, largest *InternalKey) (InternalKey, InternalKey) {
-		snew := smallest.Clone()
-		lnew := smallest.Clone()
+	setSharedSSTMetadata = func(meta *manifest.FileMetadata, creatorUniqueID uint32) {
+		// The output sst is shared so update its boundaries
+		meta.FileSmallest, meta.FileLargest = meta.Smallest, meta.Largest
+
+		// Only one key for each table for testing
+		lb, ub := meta.Smallest, meta.Smallest
+		meta.Smallest, meta.Largest = lb, ub
+		meta.SmallestPointKey, meta.LargestPointKey = lb, ub
+
+		meta.CreatorUniqueID = creatorUniqueID + 1 // fake foreign sst
+		meta.PhysicalFileNum = meta.FileNum
+
 		t.Logf("  -- new shared sst with virtual bound (%s %s) with file bound (%s %s)",
-			snew.UserKey, lnew.UserKey, smallest.UserKey, largest.UserKey)
-		return snew, lnew
+			lb.UserKey, ub.UserKey, meta.FileSmallest.UserKey, meta.FileLargest.UserKey)
 	}
 
 	// repeatly inserting/updating a random key

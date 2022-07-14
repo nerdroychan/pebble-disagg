@@ -4,7 +4,10 @@
 
 package sstable
 
-import "github.com/cockroachdb/pebble/internal/base"
+import (
+	"github.com/cockroachdb/pebble/internal/base"
+	"github.com/cockroachdb/pebble/internal/keyspan"
+)
 
 const (
 	seqNumL5PointKey = 2
@@ -14,6 +17,7 @@ const (
 
 type tableIterator struct {
 	Iterator
+	rangeDelIter keyspan.FragmentIterator
 }
 
 // NOTE: The physical layout of user keys follows the descending order of freshness
@@ -97,17 +101,45 @@ func (i *tableIterator) setExhaustedBounds(e int8) {
 	}
 }
 
-func (i *tableIterator) getCurrUserKey() *[]byte {
-	var k *[]byte
+func (i *tableIterator) getCurrUserKey() InternalKey {
+	var k InternalKey
 	switch i.Iterator.(type) {
 	case *twoLevelIterator:
-		k = &i.Iterator.(*twoLevelIterator).data.key
+		k = i.Iterator.(*twoLevelIterator).data.ikey
 	case *singleLevelIterator:
-		k = &i.Iterator.(*singleLevelIterator).data.key
+		k = i.Iterator.(*singleLevelIterator).data.ikey
 	default:
 		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 	return k
+}
+
+func (i *tableIterator) isKeyDeleted(k *InternalKey) bool {
+	if k.Kind() == InternalKeyKindMerge {
+		panic("tableIterator: found InternalKeyKindMerge when evaluating key deletion")
+	}
+	if k.Kind() == InternalKeyKindDelete {
+		return true
+	}
+	// check rangeDel in the same sstable
+	if i.rangeDelIter != nil {
+		cmp := i.getCmp()
+		span := keyspan.SeekGE(cmp, i.rangeDelIter, k.UserKey)
+		if span != nil && span.Contains(cmp, k.UserKey) && span.Covers(k.SeqNum()) {
+			return true
+		}
+	}
+	return false
+}
+
+func setKeySeqNum(key *InternalKey, level int) {
+	if level == 5 {
+		key.SetSeqNum(seqNumL5PointKey)
+	} else if level == 6 {
+		key.SetSeqNum(seqNumL6All)
+	} else {
+		panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
+	}
 }
 
 func (i *tableIterator) seekGEShared(
@@ -121,7 +153,7 @@ func (i *tableIterator) seekGEShared(
 		return nil, nil
 	} else if ib < 0 {
 		// The search key underflows, substitute it with the lower shared bound
-		key = r.meta.SmallestPointKey.UserKey
+		key = r.meta.Smallest.UserKey
 	}
 	var k *InternalKey
 	var v []byte
@@ -139,13 +171,13 @@ func (i *tableIterator) seekGEShared(
 	// here because if k != nil then we are guaranteed to be positioned at the first
 	// user key that satisfies the condition, which is the latest version.
 	if !i.isLocallyCreated() {
-		level := i.GetLevel()
-		if level == 5 {
-			k.SetSeqNum(seqNumL5PointKey)
-		} else if level == 6 {
-			k.SetSeqNum(seqNumL6All)
+		// if the latest key is a tombstone, omit the current key
+		// Note that we don't need to set the SeqNum in this case because the key
+		// returned from the last level is either nil or has its SeqNum set correctly
+		if i.isKeyDeleted(k) {
+			k, v = i.nextShared()
 		} else {
-			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
+			setKeySeqNum(k, i.GetLevel())
 		}
 	}
 	// finally, check upper bound
@@ -192,22 +224,19 @@ func (i *tableIterator) seekLTShared(key []byte) (*InternalKey, []byte) {
 	// SeekLT is different from SeekGE as we are at the oldest version for the user key
 	// and we need to move to the newest version
 	if !i.isLocallyCreated() {
-		ik := *i.getCurrUserKey()
+		ik := i.getCurrUserKey()
 		k, _ = i.Iterator.Prev()
-		for k != nil && cmp(k.UserKey, ik) == 0 {
+		for k != nil && cmp(k.UserKey, ik.UserKey) == 0 {
 			k, _ = i.Iterator.Prev()
 		}
 		// now, either k == nil or k < ik, so k is just one slot over
 		k, v = i.Iterator.Next()
-		level := i.GetLevel()
-		if level == 5 {
-			k.SetSeqNum(seqNumL5PointKey)
-		} else if level == 6 {
-			k.SetSeqNum(seqNumL6All)
+		// if the latest key is a tombstone, omit the current key
+		if i.isKeyDeleted(k) {
+			k, v = i.prevShared()
 		} else {
-			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
+			setKeySeqNum(k, i.GetLevel())
 		}
-
 	}
 	// check lower bound
 	if i.cmpSharedBound(k.UserKey) < 0 {
@@ -228,27 +257,19 @@ func (i *tableIterator) SeekLT(key []byte) (*InternalKey, []byte) {
 // First() and Last() are just two synonyms of SeekGE and SeekLT
 
 func (i *tableIterator) First() (*InternalKey, []byte) {
-	r := i.getReader()
-	k, v := i.Iterator.First()
 	if i.isShared() {
-		// check lower bound
-		if i.cmpSharedBound(k.UserKey) < 0 {
-			k, v = i.SeekGE(r.meta.Smallest.UserKey, true)
-		}
+		// in this case the table must have a smallest key
+		return i.seekGEShared(nil, i.getReader().meta.Smallest.UserKey, false)
 	}
-	return k, v
+	return i.Iterator.First()
 }
 
 func (i *tableIterator) Last() (*InternalKey, []byte) {
-	r := i.getReader()
-	k, v := i.Iterator.Last()
 	if i.isShared() {
-		// check upper bound
-		if i.cmpSharedBound(k.UserKey) > 0 {
-			k, v = i.SeekLT(r.meta.Largest.UserKey)
-		}
+		// in this case the table must have a smallest key
+		return i.seekLTShared(i.getReader().meta.Largest.UserKey)
 	}
-	return k, v
+	return i.Iterator.Last()
 }
 
 func (i *tableIterator) nextShared() (*InternalKey, []byte) {
@@ -259,7 +280,7 @@ func (i *tableIterator) nextShared() (*InternalKey, []byte) {
 	// it is highly possible that we encounter these history versions which we should omit,
 	// and we can not easily determine when we crossed the key boundaries.
 	// To this end, we let tmpIter go first.
-	ik := *i.getCurrUserKey()
+	ik := i.getCurrUserKey()
 	k, v := i.Iterator.Next()
 	if k == nil {
 		i.setExhaustedBounds(+1)
@@ -267,24 +288,21 @@ func (i *tableIterator) nextShared() (*InternalKey, []byte) {
 	}
 	if !i.isLocallyCreated() {
 		// k is not nil, so it might position to a different key or a invisible history version
-		for k != nil && cmp(k.UserKey, ik) == 0 {
-			k, _ = i.Iterator.Next()
+		for k != nil && cmp(k.UserKey, ik.UserKey) == 0 {
+			k, v = i.Iterator.Next()
 		}
 		// now one of the following conditions stands:
 		//   k == nil, we just return nil, or
-		//   k > ik, we let iter step back once
+		//   k > ik, we found a new key and it is the newest version
 		if k == nil {
 			i.setExhaustedBounds(+1)
 			return nil, nil
 		}
-		k, v = i.Iterator.Prev()
-		level := i.GetLevel()
-		if level == 5 {
-			k.SetSeqNum(seqNumL5PointKey)
-		} else if level == 6 {
-			k.SetSeqNum(seqNumL6All)
+		// if the latest key is a tombstone, omit the current key
+		if i.isKeyDeleted(k) {
+			k, v = i.nextShared()
 		} else {
-			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
+			setKeySeqNum(k, i.GetLevel())
 		}
 	}
 	// check upper bound
@@ -316,20 +334,17 @@ func (i *tableIterator) prevShared() (*InternalKey, []byte) {
 	// if the table is not locally created (i.e., purely foreign table), make sure exactly
 	// one version (the latest) of a user key is exposed. The SeqNum needs to be updated accordingly.
 	if !i.isLocallyCreated() {
-		ik := *i.getCurrUserKey()
+		ik := i.getCurrUserKey()
 		// find duplicated keys, or nil, whichever comes first
-		for k != nil && cmp(k.UserKey, ik) == 0 {
+		for k != nil && cmp(k.UserKey, ik.UserKey) == 0 {
 			k, _ = i.Iterator.Prev()
 		}
 		// At the current moment, either k < ik, or k == nil. So we rewind iter once.
 		k, v = i.Iterator.Next()
-		level := i.GetLevel()
-		if level == 5 {
-			k.SetSeqNum(seqNumL5PointKey)
-		} else if level == 6 {
-			k.SetSeqNum(seqNumL6All)
+		if i.isKeyDeleted(k) {
+			k, v = i.prevShared()
 		} else {
-			panic("sharedTableIterator: a table with shared flag must have its level at 5 or 6")
+			setKeySeqNum(k, i.GetLevel())
 		}
 	}
 	// check lower bound
@@ -345,6 +360,16 @@ func (i *tableIterator) Prev() (*InternalKey, []byte) {
 		return i.prevShared()
 	}
 	return i.Iterator.Prev()
+}
+
+func (i *tableIterator) Close() error {
+	if i.rangeDelIter != nil {
+		err := i.rangeDelIter.Close()
+		if err != nil {
+			panic("tableIterator: internal fragmentBlockIter close() error")
+		}
+	}
+	return i.Iterator.Close()
 }
 
 func (i tableIterator) Stats() base.InternalIteratorStats {
@@ -376,3 +401,29 @@ func (i *tableIterator) ResetStats() {
 var _ base.InternalIterator = (*tableIterator)(nil)
 var _ base.InternalIteratorWithStats = (*tableIterator)(nil)
 var _ Iterator = (*tableIterator)(nil)
+
+// type rangeDelIter struct {
+// 	fragmentBlockIter
+// 	reader *Reader
+// 	level  int
+// }
+
+// This is a copy of the vanilla NewRawRangeDelIter function.
+// This function is used when creating a tableIterator because it needs a
+// fragmentBlockIter that exposes the real SeqNUms.
+// The NewRawRangeDelIter will be wrapped by the rangeDelIter type above
+// and the SeqNum for shared L5/L6 will be manipulated.
+func (r *Reader) newInternalRangeDelIter() (keyspan.FragmentIterator, error) {
+	if r.rangeDelBH.Length == 0 {
+		return nil, nil
+	}
+	h, err := r.readRangeDel()
+	if err != nil {
+		return nil, err
+	}
+	i := &fragmentBlockIter{}
+	if err := i.blockIter.initHandle(r.Compare, h, r.Properties.GlobalSeqNum); err != nil {
+		return nil, err
+	}
+	return i, nil
+}

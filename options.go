@@ -1208,7 +1208,7 @@ func (o *Options) Parse(s string, hooks *ParseHooks) error {
 				// TODO(peter): set o.TablePropertyCollectors
 			case "unique_id":
 				var uniqueID uint64
-				uniqueID, err = strconv.ParseUint(value, 10, 16)
+				uniqueID, err = strconv.ParseUint(value, 10, 32)
 				o.UniqueID = uint32(uniqueID)
 			case "validate_on_ingest":
 				o.Experimental.ValidateOnIngest, err = strconv.ParseBool(value)
