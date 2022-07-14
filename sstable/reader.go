@@ -1197,10 +1197,10 @@ func (i *compactionIterator) SeekLT(key []byte, flags base.SeekLTFlags) (*Intern
 }
 
 func (i *compactionIterator) First() (*InternalKey, []byte) {
-	i.iter.(*singleLevelIterator).err = nil // clear cached iteration error
+	i.Iterator.(*singleLevelIterator).err = nil // clear cached iteration error
 	// wrap for shared sst
 	k, v := i.tableIterator.First()
-	curOffset := i.iter.(*singleLevelIterator).recordOffset()
+	curOffset := i.Iterator.(*singleLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1213,12 +1213,12 @@ func (i *compactionIterator) Last() (*InternalKey, []byte) {
 // Note: compactionIterator.Next mirrors the implementation of Iterator.Next
 // due to performance. Keep the two in sync.
 func (i *compactionIterator) Next() (*InternalKey, []byte) {
-	if i.iter.(*singleLevelIterator).err != nil {
+	if i.Iterator.(*singleLevelIterator).err != nil {
 		return nil, nil
 	}
 	// wrap for shared sst
 	k, v := i.tableIterator.Next()
-	curOffset := i.iter.(*singleLevelIterator).recordOffset()
+	curOffset := i.Iterator.(*singleLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1832,10 +1832,10 @@ func (i *twoLevelCompactionIterator) SeekLT(
 }
 
 func (i *twoLevelCompactionIterator) First() (*InternalKey, []byte) {
-	i.iter.(*twoLevelIterator).err = nil // clear cached iteration error
+	i.Iterator.(*twoLevelIterator).err = nil // clear cached iteration error
 	// wrap for shared sst
 	k, v := i.tableIterator.First()
-	curOffset := i.iter.(*twoLevelIterator).recordOffset()
+	curOffset := i.Iterator.(*twoLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -1848,12 +1848,12 @@ func (i *twoLevelCompactionIterator) Last() (*InternalKey, []byte) {
 // Note: twoLevelCompactionIterator.Next mirrors the implementation of
 // twoLevelIterator.Next due to performance. Keep the two in sync.
 func (i *twoLevelCompactionIterator) Next() (*InternalKey, []byte) {
-	if i.iter.(*twoLevelIterator).err != nil {
+	if i.Iterator.(*twoLevelIterator).err != nil {
 		return nil, nil
 	}
 	// wrap for shared sst
 	k, v := i.tableIterator.Next()
-	curOffset := i.iter.(*twoLevelIterator).recordOffset()
+	curOffset := i.Iterator.(*twoLevelIterator).recordOffset()
 	*i.bytesIterated += uint64(curOffset - i.prevOffset)
 	i.prevOffset = curOffset
 	return k, v
@@ -2241,7 +2241,7 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 		if err != nil {
 			return nil, err
 		}
-		return &tableIterator{i, true}, nil
+		return &tableIterator{i}, nil
 	}
 
 	i := singleLevelIterPool.Get().(*singleLevelIterator)
@@ -2249,7 +2249,7 @@ func (r *Reader) NewIterWithBlockPropertyFilters(
 	if err != nil {
 		return nil, err
 	}
-	return &tableIterator{i, false}, nil
+	return &tableIterator{i}, nil
 }
 
 // NewIter returns an iterator for the contents of the table. If an error
@@ -2270,7 +2270,7 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 		}
 		i.setupForCompaction()
 		return &twoLevelCompactionIterator{
-			tableIterator: &tableIterator{i, true},
+			tableIterator: &tableIterator{i},
 			bytesIterated: bytesIterated,
 		}, nil
 	}
@@ -2281,7 +2281,7 @@ func (r *Reader) NewCompactionIter(bytesIterated *uint64) (Iterator, error) {
 	}
 	i.setupForCompaction()
 	return &compactionIterator{
-		tableIterator: &tableIterator{i, false},
+		tableIterator: &tableIterator{i},
 		bytesIterated: bytesIterated,
 	}, nil
 }

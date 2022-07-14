@@ -13,8 +13,7 @@ const (
 )
 
 type tableIterator struct {
-	iter     Iterator
-	twoLevel bool
+	Iterator
 }
 
 // NOTE: The physical layout of user keys follows the descending order of freshness
@@ -22,20 +21,26 @@ type tableIterator struct {
 
 func (i *tableIterator) getReader() *Reader {
 	var r *Reader
-	if i.twoLevel {
-		r = i.iter.(*twoLevelIterator).reader
-	} else {
-		r = i.iter.(*singleLevelIterator).reader
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		r = i.Iterator.(*twoLevelIterator).reader
+	case *singleLevelIterator:
+		r = i.Iterator.(*singleLevelIterator).reader
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 	return r
 }
 
 func (i *tableIterator) getCmp() Compare {
 	var cmp Compare
-	if i.twoLevel {
-		cmp = i.iter.(*twoLevelIterator).cmp
-	} else {
-		cmp = i.iter.(*singleLevelIterator).cmp
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		cmp = i.Iterator.(*twoLevelIterator).cmp
+	case *singleLevelIterator:
+		cmp = i.Iterator.(*singleLevelIterator).cmp
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 	return cmp
 }
@@ -67,10 +72,13 @@ func (i *tableIterator) cmpSharedBound(key []byte) int {
 
 func (i *tableIterator) isLocallyCreated() bool {
 	var r *Reader
-	if i.twoLevel {
-		r = i.iter.(*twoLevelIterator).reader
-	} else {
-		r = i.iter.(*singleLevelIterator).reader
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		r = i.Iterator.(*twoLevelIterator).reader
+	case *singleLevelIterator:
+		r = i.Iterator.(*singleLevelIterator).reader
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 	if i.isShared() && r.meta.CreatorUniqueID == DBUniqueID {
 		return true
@@ -79,19 +87,25 @@ func (i *tableIterator) isLocallyCreated() bool {
 }
 
 func (i *tableIterator) setExhaustedBounds(e int8) {
-	if i.twoLevel {
-		i.iter.(*twoLevelIterator).exhaustedBounds = e
-	} else {
-		i.iter.(*singleLevelIterator).exhaustedBounds = e
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		i.Iterator.(*twoLevelIterator).exhaustedBounds = e
+	case *singleLevelIterator:
+		i.Iterator.(*singleLevelIterator).exhaustedBounds = e
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 }
 
 func (i *tableIterator) getCurrUserKey() *[]byte {
 	var k *[]byte
-	if i.twoLevel {
-		k = &i.iter.(*twoLevelIterator).data.key
-	} else {
-		k = &i.iter.(*singleLevelIterator).data.key
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		k = &i.Iterator.(*twoLevelIterator).data.key
+	case *singleLevelIterator:
+		k = &i.Iterator.(*singleLevelIterator).data.key
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 	return k
 }
@@ -112,9 +126,9 @@ func (i *tableIterator) seekGEShared(
 	var k *InternalKey
 	var v []byte
 	if prefix == nil {
-		k, v = i.iter.SeekGE(key, trySeekUsingNext)
+		k, v = i.Iterator.SeekGE(key, trySeekUsingNext)
 	} else {
-		k, v = i.iter.SeekPrefixGE(prefix, key, trySeekUsingNext)
+		k, v = i.Iterator.SeekPrefixGE(prefix, key, trySeekUsingNext)
 	}
 	if k == nil {
 		i.setExhaustedBounds(+1)
@@ -147,7 +161,7 @@ func (i *tableIterator) SeekGE(key []byte, trySeekUsingNext bool) (*InternalKey,
 		return i.seekGEShared(nil, key, trySeekUsingNext)
 	}
 	// non-shared path
-	return i.iter.SeekGE(key, trySeekUsingNext)
+	return i.Iterator.SeekGE(key, trySeekUsingNext)
 }
 
 func (i *tableIterator) SeekPrefixGE(
@@ -157,7 +171,7 @@ func (i *tableIterator) SeekPrefixGE(
 		return i.seekGEShared(prefix, key, trySeekUsingNext)
 	}
 	// non-shared path
-	return i.iter.SeekPrefixGE(prefix, key, trySeekUsingNext)
+	return i.Iterator.SeekPrefixGE(prefix, key, trySeekUsingNext)
 }
 
 func (i *tableIterator) seekLTShared(key []byte) (*InternalKey, []byte) {
@@ -169,7 +183,7 @@ func (i *tableIterator) seekLTShared(key []byte) (*InternalKey, []byte) {
 	} else if ib > 0 {
 		key = r.meta.Largest.UserKey
 	}
-	k, v := i.iter.SeekLT(key)
+	k, v := i.Iterator.SeekLT(key)
 	if k == nil {
 		i.setExhaustedBounds(-1)
 		return nil, nil
@@ -178,12 +192,12 @@ func (i *tableIterator) seekLTShared(key []byte) (*InternalKey, []byte) {
 	// and we need to move to the newest version
 	if !i.isLocallyCreated() {
 		ik := *i.getCurrUserKey()
-		k, _ = i.iter.Prev()
+		k, _ = i.Iterator.Prev()
 		for k != nil && cmp(k.UserKey, ik) == 0 {
-			k, _ = i.iter.Prev()
+			k, _ = i.Iterator.Prev()
 		}
 		// now, either k == nil or k < ik, so k is just one slot over
-		k, v = i.iter.Next()
+		k, v = i.Iterator.Next()
 		if r.meta.Level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
 		} else if r.meta.Level == 6 {
@@ -206,14 +220,14 @@ func (i *tableIterator) SeekLT(key []byte) (*InternalKey, []byte) {
 	if i.isShared() {
 		return i.seekLTShared(key)
 	}
-	return i.iter.SeekLT(key)
+	return i.Iterator.SeekLT(key)
 }
 
 // First() and Last() are just two synonyms of SeekGE and SeekLT
 
 func (i *tableIterator) First() (*InternalKey, []byte) {
 	r := i.getReader()
-	k, v := i.iter.First()
+	k, v := i.Iterator.First()
 	if i.isShared() {
 		// check lower bound
 		if i.cmpSharedBound(k.UserKey) < 0 {
@@ -225,7 +239,7 @@ func (i *tableIterator) First() (*InternalKey, []byte) {
 
 func (i *tableIterator) Last() (*InternalKey, []byte) {
 	r := i.getReader()
-	k, v := i.iter.Last()
+	k, v := i.Iterator.Last()
 	if i.isShared() {
 		// check upper bound
 		if i.cmpSharedBound(k.UserKey) > 0 {
@@ -244,7 +258,7 @@ func (i *tableIterator) nextShared() (*InternalKey, []byte) {
 	// and we can not easily determine when we crossed the key boundaries.
 	// To this end, we let tmpIter go first.
 	ik := *i.getCurrUserKey()
-	k, v := i.iter.Next()
+	k, v := i.Iterator.Next()
 	if k == nil {
 		i.setExhaustedBounds(+1)
 		return nil, nil
@@ -252,7 +266,7 @@ func (i *tableIterator) nextShared() (*InternalKey, []byte) {
 	if !i.isLocallyCreated() {
 		// k is not nil, so it might position to a different key or a invisible history version
 		for k != nil && cmp(k.UserKey, ik) == 0 {
-			k, _ = i.iter.Next()
+			k, _ = i.Iterator.Next()
 		}
 		// now one of the following conditions stands:
 		//   k == nil, we just return nil, or
@@ -261,7 +275,7 @@ func (i *tableIterator) nextShared() (*InternalKey, []byte) {
 			i.setExhaustedBounds(+1)
 			return nil, nil
 		}
-		k, v = i.iter.Prev()
+		k, v = i.Iterator.Prev()
 		if r.meta.Level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
 		} else if r.meta.Level == 6 {
@@ -282,7 +296,7 @@ func (i *tableIterator) Next() (*InternalKey, []byte) {
 	if i.isShared() {
 		return i.nextShared()
 	}
-	return i.iter.Next()
+	return i.Iterator.Next()
 }
 
 func (i *tableIterator) prevShared() (*InternalKey, []byte) {
@@ -291,7 +305,7 @@ func (i *tableIterator) prevShared() (*InternalKey, []byte) {
 	// Note that if the iterator operates correctly, this Prev() must set the position
 	// of the iterator to a different key, as we were exposing the latest point version
 	// of a user key, i.e., the first slot.
-	k, v := i.iter.Prev()
+	k, v := i.Iterator.Prev()
 	if k == nil {
 		i.setExhaustedBounds(-1)
 		return nil, nil
@@ -302,10 +316,10 @@ func (i *tableIterator) prevShared() (*InternalKey, []byte) {
 		ik := *i.getCurrUserKey()
 		// find duplicated keys, or nil, whichever comes first
 		for k != nil && cmp(k.UserKey, ik) == 0 {
-			k, _ = i.iter.Prev()
+			k, _ = i.Iterator.Prev()
 		}
 		// At the current moment, either k < ik, or k == nil. So we rewind iter once.
-		k, v = i.iter.Next()
+		k, v = i.Iterator.Next()
 		if r.meta.Level == 5 {
 			k.SetSeqNum(seqNumL5PointKey)
 		} else if r.meta.Level == 6 {
@@ -327,45 +341,51 @@ func (i *tableIterator) Prev() (*InternalKey, []byte) {
 	if i.isShared() {
 		return i.prevShared()
 	}
-	return i.iter.Prev()
+	return i.Iterator.Prev()
 }
 
 func (i *tableIterator) Error() error {
-	return i.iter.Error()
+	return i.Iterator.Error()
 }
 
 func (i *tableIterator) Close() error {
-	return i.iter.Close()
+	return i.Iterator.Close()
 }
 
 func (i *tableIterator) SetBounds(lower, upper []byte) {
-	i.iter.SetBounds(lower, upper)
+	i.Iterator.SetBounds(lower, upper)
 }
 
 func (i *tableIterator) String() string {
-	return i.iter.String()
+	return i.Iterator.String()
 }
 
 func (i *tableIterator) SetCloseHook(fn func(i Iterator) error) {
-	i.iter.SetCloseHook(fn)
+	i.Iterator.SetCloseHook(fn)
 }
 
 func (i tableIterator) Stats() base.InternalIteratorStats {
 	var stats base.InternalIteratorStats
-	if i.twoLevel {
-		stats = i.iter.(*twoLevelIterator).stats
-	} else {
-		stats = i.iter.(*singleLevelIterator).stats
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		stats = i.Iterator.(*twoLevelIterator).stats
+	case *singleLevelIterator:
+		stats = i.Iterator.(*singleLevelIterator).stats
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 	return stats
 }
 
 // ResetStats implements InternalIteratorWithStats.
 func (i *tableIterator) ResetStats() {
-	if i.twoLevel {
-		i.iter.(*twoLevelIterator).stats = base.InternalIteratorStats{}
-	} else {
-		i.iter.(*singleLevelIterator).stats = base.InternalIteratorStats{}
+	switch i.Iterator.(type) {
+	case *twoLevelIterator:
+		i.Iterator.(*twoLevelIterator).stats = base.InternalIteratorStats{}
+	case *singleLevelIterator:
+		i.Iterator.(*singleLevelIterator).stats = base.InternalIteratorStats{}
+	default:
+		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
 }
 
