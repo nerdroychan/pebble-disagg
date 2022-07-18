@@ -74,6 +74,13 @@ func (i *tableIterator) cmpSharedBound(key []byte) int {
 	return 0
 }
 
+// Note: the current implementation decouples isLocallyCreated() and isShared() for testing
+// purposes. If a table is locally created, the reader should follow the read path of a regular
+// iterator despite it is shared or not. Similarly, if a table is not locally created, it is
+// inherently shared. This is kinda redundant but in some tests the file metadata is not complete
+// which exposes a default value (e.g. 0) and it might direct the code to a wrong path.
+// So for now I will just leave these two flags as is..
+
 func (i *tableIterator) isLocallyCreated() bool {
 	var r *Reader
 	switch i.Iterator.(type) {
@@ -84,10 +91,7 @@ func (i *tableIterator) isLocallyCreated() bool {
 	default:
 		panic("tableIterator: i.Iterator is not singleLevelIterator or twoLevelIterator")
 	}
-	if i.isShared() && r.meta.CreatorUniqueID == DBUniqueID {
-		return true
-	}
-	return false
+	return i.isShared() && r.meta.CreatorUniqueID == DBUniqueID
 }
 
 func (i *tableIterator) setExhaustedBounds(e int8) {
@@ -402,16 +406,10 @@ var _ base.InternalIterator = (*tableIterator)(nil)
 var _ base.InternalIteratorWithStats = (*tableIterator)(nil)
 var _ Iterator = (*tableIterator)(nil)
 
-// type rangeDelIter struct {
-// 	fragmentBlockIter
-// 	reader *Reader
-// 	level  int
-// }
-
 // This is a copy of the vanilla NewRawRangeDelIter function.
 // This function is used when creating a tableIterator because it needs a
 // fragmentBlockIter that exposes the real SeqNUms.
-// The NewRawRangeDelIter will be wrapped by the rangeDelIter type above
+// The NewRawRangeDelIter will be wrapped by the rangeDelIter type below
 // and the SeqNum for shared L5/L6 will be manipulated.
 func (r *Reader) newInternalRangeDelIter() (keyspan.FragmentIterator, error) {
 	if r.rangeDelBH.Length == 0 {
@@ -427,3 +425,95 @@ func (r *Reader) newInternalRangeDelIter() (keyspan.FragmentIterator, error) {
 	}
 	return i, nil
 }
+
+type rangeDelIter struct {
+	fragmentBlockIter
+	reader   *Reader
+	level    int
+	levelSet bool
+}
+
+func (i *rangeDelIter) SetLevel(level int) {
+	i.levelSet = true
+	i.level = level
+}
+
+func (i *rangeDelIter) GetLevel() int {
+	if !i.levelSet {
+		return -1
+	}
+	return i.level
+}
+
+func (i *rangeDelIter) isShared() bool {
+	r := i.reader
+	if r.meta != nil && r.meta.IsShared {
+		return true
+	}
+	return false
+}
+
+func (i *rangeDelIter) isLocallyCreated() bool {
+	r := i.reader
+	return i.isShared() && r.meta.CreatorUniqueID == DBUniqueID
+}
+
+func setSpanSeqNum(s *keyspan.Span, seqnum uint64) {
+	for i := range s.Keys {
+		trailer := (s.Keys[i].Trailer & 0xff) | (seqnum << 8)
+		s.Keys[i].Trailer = trailer
+	}
+}
+
+func (i *rangeDelIter) filterSpan(s *keyspan.Span) *keyspan.Span {
+	if i.isShared() && !i.isLocallyCreated() {
+		level := i.GetLevel()
+		if level == 5 {
+			setSpanSeqNum(s, seqNumL5RangeDel)
+		} else if level == 6 {
+			setSpanSeqNum(s, seqNumL6All)
+		} else {
+			panic("rangeDelIter: a table with shared flag must have its level at 5 or 6")
+		}
+	}
+	return s
+}
+
+// The following functions only need to have a different behavior if
+// the table is not locally created (so it is also shared), which is different
+// from tableIterator.
+
+func (i *rangeDelIter) SeekGE(key []byte) *keyspan.Span {
+	s := i.fragmentBlockIter.SeekGE(key)
+	return i.filterSpan(s)
+}
+
+func (i *rangeDelIter) SeekLT(key []byte) *keyspan.Span {
+	s := i.fragmentBlockIter.SeekLT(key)
+	return i.filterSpan(s)
+}
+
+func (i *rangeDelIter) First() *keyspan.Span {
+	s := i.fragmentBlockIter.First()
+	return i.filterSpan(s)
+}
+
+func (i *rangeDelIter) Last() *keyspan.Span {
+	s := i.fragmentBlockIter.Last()
+	return i.filterSpan(s)
+}
+
+func (i *rangeDelIter) Next() *keyspan.Span {
+	s := i.fragmentBlockIter.Next()
+	return i.filterSpan(s)
+}
+
+func (i *rangeDelIter) Prev() *keyspan.Span {
+	s := i.fragmentBlockIter.Prev()
+	return i.filterSpan(s)
+}
+
+var _ keyspan.FragmentIterator = (*rangeDelIter)(nil)
+
+// RangeDelIter exposes the internal rangeDelIter for setting levels
+type RangeDelIter = rangeDelIter

@@ -450,6 +450,16 @@ func (c *tableCacheShard) newIters(
 		c.mu.iters[iter] = debug.Stack()
 		c.mu.Unlock()
 	}
+
+	if rangeDelIter != nil {
+		sstRangeDelIter, ok := rangeDelIter.(*sstable.RangeDelIter)
+		if !ok {
+			panic("table_cache.go: rangeDelIter returned is not sstable.RangeDelIter")
+		}
+		// Set the level here for internal use by sstable package (now only for shared sst)
+		sstRangeDelIter.SetLevel(level)
+	}
+
 	return iter, rangeDelIter, nil
 }
 

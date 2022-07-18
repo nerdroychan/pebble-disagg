@@ -40,10 +40,11 @@ func TestSharedSST(t *testing.T) {
 	//   c#0,SET - bar
 	//   d#0,SET - foo
 	//   e#0,SET - foo
-	//   e-f#1,RANGEDEL
+	//   e-f#2,RANGEDEL
 	//   If the reader treats this table as purely foreign, it can only see keys
 	//   b, c and d with value "foo" (only latest version, and also considering rangedels)
 	//   For the creator, it can see all the keys
+
 	kvPairs := []struct {
 		k      []byte
 		v      []byte
@@ -57,14 +58,22 @@ func TestSharedSST(t *testing.T) {
 		{[]byte("c"), []byte("bar"), 0, InternalKeyKindSet},
 		{[]byte("d"), []byte("foo"), 0, InternalKeyKindSet},
 		{[]byte("e"), []byte("foo"), 0, InternalKeyKindSet},
+		{[]byte("e"), []byte("f"), 2, InternalKeyKindRangeDelete},
 	}
+
 	for i := range kvPairs {
-		w.addPoint(base.MakeInternalKey(kvPairs[i].k, kvPairs[i].seqNum, kvPairs[i].kind), kvPairs[i].v)
+		kv := kvPairs[i]
+		if kv.kind != InternalKeyKindRangeDelete {
+			w.addPoint(base.MakeInternalKey(kv.k, kv.seqNum, kv.kind), kv.v)
+		} else {
+			w.addTombstone(base.MakeInternalKey(kv.k, kv.seqNum, kv.kind), kv.v)
+		}
 	}
-	w.addTombstone(base.MakeInternalKey([]byte("e"), 1, InternalKeyKindRangeDelete), []byte("f"))
 
 	require.NoError(t, w.Close())
 	t.Logf("Table writing finished")
+
+	// Reopen the file for further reading tests
 
 	f1, err := mem.Open("test")
 	require.NoError(t, err)
@@ -78,7 +87,10 @@ func TestSharedSST(t *testing.T) {
 		Filename: "test",
 	})
 	require.NoError(t, err)
+
 	// local table
+	t.Logf("Read as locally created shared table")
+
 	meta := &manifest.FileMetadata{
 		IsShared:        true,
 		CreatorUniqueID: 0,
@@ -86,23 +98,39 @@ func TestSharedSST(t *testing.T) {
 		Largest:         InternalKey{UserKey: []byte("e"), Trailer: 0},
 	}
 	r.meta = meta
-	require.Equal(t, DBUniqueID, uint32(0))
+	require.Equal(t, uint32(0), DBUniqueID)
 
 	iter, err := r.NewIter(nil, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, iter, nil)
 	iter.SetLevel(5)
 
-	t.Logf("Read as locally created shared table")
 	i := 0
 	for k, v := iter.First(); k != nil; k, v = iter.Next() {
 		t.Logf("  - %s %s", k, v)
-		require.Equal(t, *k, base.MakeInternalKey(kvPairs[i].k, kvPairs[i].seqNum, kvPairs[i].kind))
-		require.Equal(t, v, kvPairs[i].v)
+		require.Equal(t, base.MakeInternalKey(kvPairs[i].k, kvPairs[i].seqNum, kvPairs[i].kind), *k)
+		require.Equal(t, kvPairs[i].v, v)
 		i++
 	}
 	require.NoError(t, iter.Close())
 
+	fragmentIter, err := r.NewRawRangeDelIter()
+	require.NoError(t, err)
+	require.NotEqual(t, fragmentIter, nil)
+	rDelIter, ok := fragmentIter.(*rangeDelIter)
+	require.Equal(t, true, ok)
+	rDelIter.SetLevel(5)
+
+	s := rDelIter.First()
+	require.Equal(t, []byte("e"), s.Start)
+	require.Equal(t, []byte("f"), s.End)
+	for i := range s.Keys {
+		// here we should be able to see 2 as SeqNum
+		require.Equal(t, uint64(2), s.Keys[i].SeqNum())
+	}
+	require.NoError(t, rDelIter.Close())
+
+	// foreign table
 	t.Logf("Read as remotely created shared table")
 	r.meta.CreatorUniqueID = 1
 	iter, err = r.NewIter(nil, nil)
@@ -111,28 +139,33 @@ func TestSharedSST(t *testing.T) {
 	require.NotEqual(t, iter.(*tableIterator).rangeDelIter, nil)
 	iter.SetLevel(5)
 
-	// b#2,SET
-	k, v := iter.First()
-	t.Logf("  - %s %s", k, v)
-	require.Equal(t, *k, base.MakeInternalKey(kvPairs[2].k, seqNumL5PointKey, InternalKeyKindSet))
-	require.Equal(t, v, kvPairs[2].v)
-	// c#2,SET
-	k, v = iter.Next()
-	t.Logf("  - %s %s", k, v)
-	require.Equal(t, *k, base.MakeInternalKey(kvPairs[3].k, seqNumL5PointKey, InternalKeyKindSet))
-	require.Equal(t, v, kvPairs[3].v)
-	// d#2,SET
-	k, v = iter.Next()
-	t.Logf("  - %s %s", k, v)
-	require.Equal(t, *k, base.MakeInternalKey(kvPairs[5].k, seqNumL5PointKey, InternalKeyKindSet))
-	require.Equal(t, v, kvPairs[5].v)
-	// nil
-	k, v = iter.Next()
-	if k != nil || v != nil {
-		t.Fatalf("shared iter should have reached end")
+	// Visible keys: b#2,SET, c#2,SET, d#2,SET
+	visible := []int{2, 3, 5}
+	i = 0
+	for k, v := iter.First(); k != nil; k, v = iter.Next() {
+		require.Less(t, i, len(visible))
+		t.Logf("  - %s %s", k, v)
+		require.Equal(t, base.MakeInternalKey(kvPairs[visible[i]].k, seqNumL5PointKey, kvPairs[visible[i]].kind), *k)
+		require.Equal(t, kvPairs[visible[i]].v, v)
+		i++
 	}
 
 	require.NoError(t, iter.Close())
+
+	fragmentIter, err = r.NewRawRangeDelIter()
+	require.NoError(t, err)
+	require.NotEqual(t, fragmentIter, nil)
+	rDelIter, ok = fragmentIter.(*rangeDelIter)
+	require.Equal(t, true, ok)
+	rDelIter.SetLevel(6)
+
+	s = rDelIter.First()
+	require.Equal(t, []byte("e"), s.Start)
+	require.Equal(t, []byte("f"), s.End)
+	for i := range s.Keys {
+		require.Equal(t, uint64(seqNumL6All), s.Keys[i].SeqNum())
+	}
+	require.NoError(t, rDelIter.Close())
 
 	require.NoError(t, r.Close())
 }
