@@ -2166,11 +2166,19 @@ func (f FileReopenOpt) readerApply(r *Reader) {
 // PersistentCacheOpt specifies the cache options
 type PersistentCacheOpt struct {
 	PsCache PersistentCache
-	Meta    *manifest.FileMetadata
 }
 
 func (p PersistentCacheOpt) readerApply(r *Reader) {
 	// r.psCache = p.PsCache
+	r.psCache = nil
+}
+
+// FileMetadataOpt specifies the reader's meta field
+type FileMetadataOpt struct {
+	Meta *manifest.FileMetadata
+}
+
+func (p FileMetadataOpt) readerApply(r *Reader) {
 	r.meta = p.Meta
 }
 

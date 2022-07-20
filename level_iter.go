@@ -525,6 +525,7 @@ func (l *levelIter) loadFile(file *fileMetadata, dir int) loadFileReturnIndicato
 		return noFileLoaded
 	}
 
+	// This is the main loop that seeks for the target file to be loaded
 	for {
 		l.iterFile = file
 		if file == nil {
@@ -559,6 +560,23 @@ func (l *levelIter) loadFile(file *fileMetadata, dir int) loadFileReturnIndicato
 			}
 			file = l.files.Prev()
 			continue
+		}
+
+		// We have targeted a file but we need to further check the shared sst related options
+		if l.tableOpts.SkipSharedFile && file.IsShared {
+			// No need to check if the file is locally created or not as this is mostly for exporting
+			if l.tableOpts.SharedFileCallback != nil {
+				l.tableOpts.SharedFileCallback(file)
+			}
+			if dir < 0 {
+				file = l.files.Prev()
+				continue
+			} else if dir > 0 {
+				file = l.files.Next()
+				continue
+			} else {
+				panic("level_iter.go: dir == 0")
+			}
 		}
 
 		var rangeDelIter keyspan.FragmentIterator

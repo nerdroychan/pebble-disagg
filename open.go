@@ -134,9 +134,12 @@ func Open(dirname string, opts *Options) (db *DB, _ error) {
 	d.mu.compact.inProgress = make(map[*compaction]struct{})
 	d.mu.compact.noOngoingFlushStartTime = time.Now()
 	d.mu.snapshots.init()
+
 	// logSeqNum is the next sequence number that will be assigned. Start
 	// assigning sequence numbers from 1 to match rocksdb.
-	d.mu.versions.atomic.logSeqNum = 1
+	// d.mu.versions.atomic.logSeqNum = 1
+	// Note: for shared sst, only start from 4 here
+	d.mu.versions.atomic.logSeqNum = sstable.SeqNumStart
 
 	d.timeNow = time.Now
 

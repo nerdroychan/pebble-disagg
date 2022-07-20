@@ -108,24 +108,6 @@ func TestDBWithSharedSST(t *testing.T) {
 	}
 
 	printlevels()
-	// read some keys to trigger new compactions
-	rand.Shuffle(N, func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-	t.Logf("Touching ...")
-	for i := 0; i < N; i++ {
-		_, closer, err := d.Get(keys[i])
-		if err == nil {
-			require.NoError(t, closer.Close())
-		}
-	}
-	printlevels()
-
-	// check the number of files in the shared fs bucket
-	// t.Logf("Shared fs metadata")
-	// for i := 0; i < buckets; i++ {
-	// 	lst, err := sharedfs.List(fmt.Sprintf("%d/%d", uid, i))
-	// 	require.NoError(t, err)
-	// 	t.Logf("  -- shared fs bucket %d has %d files: %s", i, len(lst), strings.Join(lst, " "))
-	// }
 
 	// validating visible and invisible keys
 	validateboundaries := func() {

@@ -8,7 +8,7 @@ iter-new a
 flush
 ----
 0.0:
-  000005:[a#1,SET-a#1,SET]
+  000005:[a#4,SET-a#4,SET]
 
 # iter b references both a memtable and sstable 5.
 
@@ -50,8 +50,8 @@ set b 2
 flush
 ----
 0.0:
-  000005:[a#1,SET-a#1,SET]
-  000007:[b#2,SET-b#2,SET]
+  000005:[a#4,SET-a#4,SET]
+  000007:[b#5,SET-b#5,SET]
 
 # iter c references both a memtable and sstables 5 and 7.
 
@@ -61,7 +61,7 @@ iter-new c
 compact a-z
 ----
 6:
-  000008:[a#0,SET-b#0,SET]
+  000008:[a#3,SET-b#3,SET]
 
 metrics
 ----
@@ -73,8 +73,8 @@ __level_____count____size___score______in__ingest(sz_cnt)____move(sz_cnt)___writ
       3         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       4         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       5         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      6         1   778 B       -   1.5 K     0 B       0     0 B       0   778 B       1   1.5 K       1     0.5
-  total         1   778 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
+      6         1   779 B       -   1.5 K     0 B       0     0 B       0   779 B       1   1.5 K       1     0.5
+  total         1   779 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
   flush         2
 compact         1     0 B     0 B       0          (size == estimated-debt, score = in-progress-bytes, in = num-in-progress)
   ctype         1       0       0       0       0       0       0  (default, delete, elision, move, read, rewrite, multi-level)
@@ -106,8 +106,8 @@ __level_____count____size___score______in__ingest(sz_cnt)____move(sz_cnt)___writ
       3         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       4         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       5         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      6         1   778 B       -   1.5 K     0 B       0     0 B       0   778 B       1   1.5 K       1     0.5
-  total         1   778 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
+      6         1   779 B       -   1.5 K     0 B       0     0 B       0   779 B       1   1.5 K       1     0.5
+  total         1   779 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
   flush         2
 compact         1     0 B     0 B       0          (size == estimated-debt, score = in-progress-bytes, in = num-in-progress)
   ctype         1       0       0       0       0       0       0  (default, delete, elision, move, read, rewrite, multi-level)
@@ -136,8 +136,8 @@ __level_____count____size___score______in__ingest(sz_cnt)____move(sz_cnt)___writ
       3         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       4         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       5         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      6         1   778 B       -   1.5 K     0 B       0     0 B       0   778 B       1   1.5 K       1     0.5
-  total         1   778 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
+      6         1   779 B       -   1.5 K     0 B       0     0 B       0   779 B       1   1.5 K       1     0.5
+  total         1   779 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
   flush         2
 compact         1     0 B     0 B       0          (size == estimated-debt, score = in-progress-bytes, in = num-in-progress)
   ctype         1       0       0       0       0       0       0  (default, delete, elision, move, read, rewrite, multi-level)
@@ -169,8 +169,8 @@ __level_____count____size___score______in__ingest(sz_cnt)____move(sz_cnt)___writ
       3         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       4         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
       5         0     0 B    0.00     0 B     0 B       0     0 B       0     0 B       0     0 B       0     0.0
-      6         1   778 B       -   1.5 K     0 B       0     0 B       0   778 B       1   1.5 K       1     0.5
-  total         1   778 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
+      6         1   779 B       -   1.5 K     0 B       0     0 B       0   779 B       1   1.5 K       1     0.5
+  total         1   779 B       -    84 B     0 B       0     0 B       0   2.3 K       3   1.5 K       1    28.6
   flush         2
 compact         1     0 B     0 B       0          (size == estimated-debt, score = in-progress-bytes, in = num-in-progress)
   ctype         1       0       0       0       0       0       0  (default, delete, elision, move, read, rewrite, multi-level)
